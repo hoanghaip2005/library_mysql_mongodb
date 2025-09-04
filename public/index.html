@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Library Platform</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <i class="fas fa-book"></i>
+                <span>Smart Library</span>
+            </div>
+            <div class="nav-menu" id="nav-menu">
+                <a href="#home" class="nav-link">Home</a>
+                <a href="#search" class="nav-link">Search Books</a>
+                <a href="#my-books" class="nav-link" id="my-books-link" style="display: none;">My Books</a>
+                <a href="#reviews" class="nav-link">Reviews</a>
+                <a href="#admin" class="nav-link" id="admin-link" style="display: none;">Admin</a>
+                <div class="nav-auth" id="nav-auth">
+                    <button class="btn btn-outline" id="login-btn">Login</button>
+                    <button class="btn btn-primary" id="register-btn">Register</button>
+                </div>
+                <div class="nav-user" id="nav-user" style="display: none;">
+                    <span id="user-name"></span>
+                    <button class="btn btn-outline" id="logout-btn">Logout</button>
+                </div>
+            </div>
+            <div class="hamburger" id="hamburger">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Home Section -->
+        <section id="home" class="section active">
+            <div class="hero">
+                <h1>Welcome to Smart Library Platform</h1>
+                <p>Discover, borrow, and review books in our digital library system</p>
+                <div class="hero-stats">
+                    <div class="stat">
+                        <i class="fas fa-book"></i>
+                        <span id="total-books">-</span>
+                        <label>Books</label>
+                    </div>
+                    <div class="stat">
+                        <i class="fas fa-users"></i>
+                        <span id="total-readers">-</span>
+                        <label>Readers</label>
+                    </div>
+                    <div class="stat">
+                        <i class="fas fa-star"></i>
+                        <span id="total-reviews">-</span>
+                        <label>Reviews</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="featured-section">
+                <h2>Featured Books</h2>
+                <div class="books-grid" id="featured-books">
+                    <!-- Featured books will be loaded here -->
+                </div>
+            </div>
+
+            <div class="recent-reviews">
+                <h2>Recent Reviews</h2>
+                <div class="reviews-list" id="recent-reviews">
+                    <!-- Recent reviews will be loaded here -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Search Section -->
+        <section id="search" class="section">
+            <div class="search-container">
+                <h2>Search Books</h2>
+                <div class="search-form">
+                    <div class="search-input-group">
+                        <input type="text" id="search-query" placeholder="Search by title, author, or description...">
+                        <button class="btn btn-primary" id="search-btn">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                    <div class="search-filters">
+                        <select id="genre-filter">
+                            <option value="">All Genres</option>
+                        </select>
+                        <select id="publisher-filter">
+                            <option value="">All Publishers</option>
+                        </select>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="available-only">
+                            <span>Available Only</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="search-results" id="search-results">
+                    <!-- Search results will be loaded here -->
+                </div>
+            </div>
+        </section>
+
+        <!-- My Books Section -->
+        <section id="my-books" class="section">
+            <div class="my-books-container">
+                <h2>My Books</h2>
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="current">Current Checkouts</button>
+                    <button class="tab-btn" data-tab="history">Checkout History</button>
+                    <button class="tab-btn" data-tab="reviews">My Reviews</button>
+                </div>
+                <div class="tab-content">
+                    <div class="tab-panel active" id="current-panel">
+                        <div class="books-list" id="current-checkouts">
+                            <!-- Current checkouts will be loaded here -->
+                        </div>
+                    </div>
+                    <div class="tab-panel" id="history-panel">
+                        <div class="books-list" id="checkout-history">
+                            <!-- Checkout history will be loaded here -->
+                        </div>
+                    </div>
+                    <div class="tab-panel" id="reviews-panel">
+                        <div class="reviews-list" id="my-reviews">
+                            <!-- User reviews will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Reviews Section -->
+        <section id="reviews" class="section">
+            <div class="reviews-container">
+                <h2>Book Reviews</h2>
+                <div class="reviews-list" id="all-reviews">
+                    <!-- All reviews will be loaded here -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Admin Section -->
+        <section id="admin" class="section">
+            <div class="admin-container">
+                <h2>Admin Panel</h2>
+                <div class="admin-tabs">
+                    <button class="tab-btn active" data-tab="books">Manage Books</button>
+                    <button class="tab-btn" data-tab="authors">Manage Authors</button>
+                    <button class="tab-btn" data-tab="reports">Reports</button>
+                    <button class="tab-btn" data-tab="analytics">Analytics</button>
+                </div>
+                <div class="tab-content">
+                    <div class="tab-panel active" id="books-panel">
+                        <div class="admin-actions">
+                            <button class="btn btn-primary" id="add-book-btn">Add New Book</button>
+                            <button class="btn btn-secondary" id="refresh-books-btn">Refresh</button>
+                        </div>
+                        <div class="admin-content" id="books-content">
+                            <!-- Books management will be loaded here -->
+                        </div>
+                    </div>
+                    <div class="tab-panel" id="authors-panel">
+                        <div class="admin-actions">
+                            <button class="btn btn-primary" id="add-author-btn">Add New Author</button>
+                            <button class="btn btn-secondary" id="refresh-authors-btn">Refresh</button>
+                        </div>
+                        <div class="admin-content" id="authors-content">
+                            <!-- Authors management will be loaded here -->
+                        </div>
+                    </div>
+                    <div class="tab-panel" id="reports-panel">
+                        <div class="reports-container" id="reports-content">
+                            <!-- Reports will be loaded here -->
+                        </div>
+                    </div>
+                    <div class="tab-panel" id="analytics-panel">
+                        <div class="analytics-container" id="analytics-content">
+                            <div class="analytics-tabs">
+                                <button class="analytics-tab-btn active" data-analytics-tab="session-time">Session Time</button>
+                                <button class="analytics-tab-btn" data-analytics-tab="highlights">Most Highlighted</button>
+                                <button class="analytics-tab-btn" data-analytics-tab="reading-time">Top Books by Reading Time</button>
+                                <button class="analytics-tab-btn" data-analytics-tab="device-patterns">Device Patterns</button>
+                                <button class="analytics-tab-btn" data-analytics-tab="time-activity">Time Activity</button>
+                            </div>
+                            <div class="analytics-content">
+                                <div class="analytics-panel active" id="session-time-panel">
+                                    <h3>Average Session Time per User</h3>
+                                    <div id="session-time-data"></div>
+                                </div>
+                                <div class="analytics-panel" id="highlights-panel">
+                                    <h3>Most Highlighted Books</h3>
+                                    <div id="highlights-data"></div>
+                                </div>
+                                <div class="analytics-panel" id="reading-time-panel">
+                                    <h3>Top 10 Books by Total Reading Time</h3>
+                                    <div id="reading-time-data"></div>
+                                </div>
+                                <div class="analytics-panel" id="device-patterns-panel">
+                                    <h3>Reading Patterns by Device Type</h3>
+                                    <div id="device-patterns-data"></div>
+                                </div>
+                                <div class="analytics-panel" id="time-activity-panel">
+                                    <h3>Reading Activity by Time of Day</h3>
+                                    <div id="time-activity-data"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Modals -->
+    <!-- Login Modal -->
+    <div class="modal" id="login-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Login</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="login-username">Username or Email</label>
+                    <input type="text" id="login-username" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Login</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Register Modal -->
+    <div class="modal" id="register-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Register</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <form id="register-form">
+                <div class="form-group">
+                    <label for="register-username">Username</label>
+                    <input type="text" id="register-username" required>
+                </div>
+                <div class="form-group">
+                    <label for="register-email">Email</label>
+                    <input type="email" id="register-email" required>
+                </div>
+                <div class="form-group">
+                    <label for="register-password">Password</label>
+                    <input type="password" id="register-password" required>
+                </div>
+                <div class="form-group">
+                    <label for="register-firstname">First Name</label>
+                    <input type="text" id="register-firstname" required>
+                </div>
+                <div class="form-group">
+                    <label for="register-lastname">Last Name</label>
+                    <input type="text" id="register-lastname" required>
+                </div>
+                <div class="form-group">
+                    <label for="register-type">Account Type</label>
+                    <select id="register-type" required>
+                        <option value="reader">Reader</option>
+                        <option value="staff">Staff</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary">Register</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Book Details Modal -->
+    <div class="modal" id="book-details-modal">
+        <div class="modal-content large">
+            <div class="modal-header">
+                <h3 id="book-details-title">Book Details</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="book-details-content" id="book-details-content">
+                <!-- Book details will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Book Modal -->
+    <div class="modal" id="add-book-modal">
+        <div class="modal-content large">
+            <div class="modal-header">
+                <h3>Add New Book</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <form id="add-book-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="book-title">Title *</label>
+                        <input type="text" id="book-title" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="book-isbn">ISBN</label>
+                        <input type="text" id="book-isbn">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="book-publisher">Publisher</label>
+                        <input type="text" id="book-publisher">
+                    </div>
+                    <div class="form-group">
+                        <label for="book-genre">Genre</label>
+                        <input type="text" id="book-genre">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="book-copies">Total Copies *</label>
+                        <input type="number" id="book-copies" min="1" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="book-pages">Pages</label>
+                        <input type="number" id="book-pages" min="1">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="book-description">Description</label>
+                    <textarea id="book-description" rows="4"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="book-authors">Authors *</label>
+                    <select id="book-authors" multiple required>
+                        <!-- Authors will be loaded here -->
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary">Add Book</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Author Modal -->
+    <div class="modal" id="add-author-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add New Author</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <form id="add-author-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="author-firstname">First Name *</label>
+                        <input type="text" id="author-firstname" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="author-lastname">Last Name *</label>
+                        <input type="text" id="author-lastname" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="author-birthdate">Birth Date</label>
+                        <input type="date" id="author-birthdate">
+                    </div>
+                    <div class="form-group">
+                        <label for="author-nationality">Nationality</label>
+                        <input type="text" id="author-nationality">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="author-biography">Biography</label>
+                    <textarea id="author-biography" rows="4"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">Add Author</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Review Book Modal -->
+    <div class="modal" id="review-book-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Write a Review</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <form id="review-book-form">
+                <input type="hidden" id="review-book-id">
+                <div class="form-group">
+                    <label for="review-rating">Rating *</label>
+                    <div class="rating-input">
+                        <input type="radio" id="rating-5" name="rating" value="5">
+                        <label for="rating-5">★</label>
+                        <input type="radio" id="rating-4" name="rating" value="4">
+                        <label for="rating-4">★</label>
+                        <input type="radio" id="rating-3" name="rating" value="3">
+                        <label for="rating-3">★</label>
+                        <input type="radio" id="rating-2" name="rating" value="2">
+                        <label for="rating-2">★</label>
+                        <input type="radio" id="rating-1" name="rating" value="1">
+                        <label for="rating-1">★</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="review-comment">Comment</label>
+                    <textarea id="review-comment" rows="4" placeholder="Share your thoughts about this book..."></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">Submit Review</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div class="loading-spinner" id="loading-spinner">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
