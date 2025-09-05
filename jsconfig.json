@@ -4,7 +4,7 @@
         "allowJs": true,
         "checkJs": false,
         "module": "commonjs",
-        "moduleResolution": "bundler",
+        "moduleResolution": "node",
         "resolveJsonModule": true,
         "jsx": "preserve",
         "ignoreDeprecations": "5.0"

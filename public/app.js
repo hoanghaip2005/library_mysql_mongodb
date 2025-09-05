@@ -665,11 +665,13 @@ class SmartLibraryApp {
         console.log('Reviews:', reviews);
         
         container.innerHTML = reviews.map(review => {
+            const currentUserId = this.currentUser?.user_id;
+            const reviewUserId = parseInt(review.user_id);
             // For debugging
             console.log('Comparing user IDs:', {
-                currentUserId: this.currentUser?.user_id,
-                reviewUserId: review.user_id,
-                isMatch: this.currentUser?.user_id === review.user_id
+                currentUserId,
+                reviewUserId,
+                isMatch: currentUserId === reviewUserId
             });
             
             return `
@@ -1012,7 +1014,9 @@ class SmartLibraryApp {
         const totalCopies = parseInt(document.getElementById('book-copies').value);
         const pages = document.getElementById('book-pages').value ? parseInt(document.getElementById('book-pages').value) : null;
         const description = document.getElementById('book-description').value.trim();
-        const authorIds = Array.from(document.getElementById('book-authors').selectedOptions).map(option => parseInt(option.value));
+        const authorSelect = document.getElementById('book-authors');
+        const selectedAuthor = authorSelect.value;
+        console.log('Selected author ID:', selectedAuthor);
 
         // Basic client-side validation
         if (!title) {
@@ -1020,8 +1024,14 @@ class SmartLibraryApp {
             return;
         }
 
-        if (!authorIds.length) {
-            this.showToast('Please select at least one author', 'error');
+        if (!selectedAuthor) {
+            this.showToast('Please select an author', 'error');
+            return;
+        }
+
+        const authorId = parseInt(selectedAuthor, 10);
+        if (isNaN(authorId) || authorId < 1) {
+            this.showToast('Invalid author selected', 'error');
             return;
         }
 
@@ -1040,11 +1050,12 @@ class SmartLibraryApp {
             totalCopies,
             pages,
             description: description || null,
-            authorIds
+            authorId
         };
 
         try {
             this.showLoading();
+            console.log('Form data before submit:', formData);
             const response = await this.apiCall('/api/admin/books', 'POST', formData);
 
             if (response.success) {
@@ -1230,6 +1241,21 @@ class SmartLibraryApp {
         }
     }
 
+    async deleteAuthor(authorId) {
+        try {
+            const response = await this.apiCall(`/api/admin/authors/${authorId}`, 'DELETE');
+            if (response.success) {
+                await this.loadAdminData(); // Reload the authors list
+                this.showMessage('Author deleted successfully');
+            } else {
+                throw new Error(response.message || 'Failed to delete author');
+            }
+        } catch (error) {
+            console.error('Delete author error:', error);
+            this.showError(error.message || 'Failed to delete author');
+        }
+    }
+
     async loadAdminData() {
         await Promise.all([
             this.loadBooks(),
@@ -1256,7 +1282,9 @@ class SmartLibraryApp {
     async loadAuthors() {
         try {
             const response = await this.apiCall('/api/books/authors', 'GET');
+            console.log('Authors loaded from API:', response);
             if (response.success) {
+                console.log('Authors data:', response.data.authors);
                 this.renderAdminAuthors(response.data.authors);
                 this.populateAuthorSelect(response.data.authors);
             } else {
@@ -1735,7 +1763,8 @@ class SmartLibraryApp {
                             <td>${this.escapeHtml(author.nationality || 'N/A')}</td>
                             <td>${author.book_count}</td>
                             <td>
-                                <button class="btn btn-secondary btn-small edit-author-btn" data-author-id="${author.author_id}" type="button">Edit</button>
+                                <button class="btn btn-secondary btn-small edit-author-btn me-2" data-author-id="${author.author_id}" type="button">Edit</button>
+                                <button class="btn btn-danger btn-small delete-author-btn" data-author-id="${author.author_id}" data-name="${this.escapeHtml(author.first_name)} ${this.escapeHtml(author.last_name)}" type="button">Delete</button>
                             </td>
                         </tr>
                     `).join('')}
@@ -1746,13 +1775,33 @@ class SmartLibraryApp {
 
     populateAuthorSelect(authors) {
         const select = document.getElementById('book-authors');
+        console.log('Raw authors data:', authors);
+        
+        // First get list of available authors from debug endpoint
+        this.apiCall('/api/admin/debug/authors', 'GET')
+            .then(response => {
+                if (response.success) {
+                    console.log('Debug - Available authors:', response.data);
+                }
+            })
+            .catch(error => console.error('Error getting debug authors:', error));
+        
         select.innerHTML = '';
         authors.forEach(author => {
+            console.log('Processing author:', author);
             const option = document.createElement('option');
             option.value = author.author_id;
             option.textContent = `${author.first_name} ${author.last_name}`;
             select.appendChild(option);
+            console.log('Added option:', option.value, option.textContent);
         });
+        
+        // Verify final select content
+        const options = Array.from(select.options);
+        console.log('Final select options:', options.map(opt => ({
+            value: opt.value,
+            text: opt.textContent
+        })));
     }
 
     async loadAllReviews() {

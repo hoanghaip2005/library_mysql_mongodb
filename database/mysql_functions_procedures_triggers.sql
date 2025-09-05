@@ -3,7 +3,7 @@ USE smart_library;
 
 DELIMITER $$
 
--- AddBook: create a book and attach authors (authorIds JSON array)
+-- AddBook: create a book and attach authors (single author ID)
 DROP PROCEDURE IF EXISTS AddBook$$
 CREATE PROCEDURE AddBook(
     IN p_staff_id INT,
@@ -16,40 +16,57 @@ CREATE PROCEDURE AddBook(
     IN p_total_copies INT,
     IN p_pages INT,
     IN p_description TEXT,
-    IN p_author_ids_json JSON,
+    IN p_author_id INT,
     OUT p_success BOOLEAN,
     OUT p_message VARCHAR(255),
     OUT p_book_id INT
 )
 BEGIN
-    DECLARE i INT DEFAULT 0;
-    DECLARE arr_length INT;
-    DECLARE author_id_val INT;
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        SET p_success = FALSE;
+        SET p_message = 'SQL error occurred';
+        SET p_book_id = NULL;
+    END;
 
     START TRANSACTION;
-    SET p_success = FALSE; SET p_message = '';
-
-    INSERT INTO books(isbn, title, publisher, publication_date, genre, language, total_copies, available_copies, pages, description)
-    VALUES(p_isbn, p_title, p_publisher, p_publication_date, p_genre, p_language, p_total_copies, p_total_copies, p_pages, p_description);
-    SET p_book_id = LAST_INSERT_ID();
-
-    -- Handle author IDs from JSON array
-    SET arr_length = JSON_LENGTH(p_author_ids_json);
     
-    -- Loop through the array using different JSON path syntax
-    WHILE i < arr_length DO
-        SET author_id_val = CAST(JSON_UNQUOTE(JSON_EXTRACT(p_author_ids_json, CONCAT('$[', i, ']'))) AS UNSIGNED);
-        IF author_id_val IS NOT NULL THEN
-            INSERT IGNORE INTO book_authors(book_id, author_id) VALUES(p_book_id, author_id_val);
-        END IF;
-        SET i = i + 1;
-    END WHILE;
+    -- Initialize variables
+    SET p_success = FALSE;
+    SET p_message = '';
+    SET p_book_id = NULL;
 
-    INSERT INTO staff_logs(staff_id, action_type, target_table, target_id, new_values)
-    VALUES(p_staff_id, 'add_book', 'books', p_book_id, JSON_OBJECT('title', p_title));
+    -- Verify author exists
+    IF NOT EXISTS (SELECT 1 FROM authors WHERE author_id = p_author_id) THEN
+        SET p_success = FALSE;
+        SET p_message = CONCAT('Author ID ', p_author_id, ' not found');
+        ROLLBACK;
+    ELSE
+        -- Insert book
+        INSERT INTO books(
+            isbn, title, publisher, publication_date, genre, 
+            language, total_copies, available_copies, pages, description
+        ) VALUES (
+            p_isbn, p_title, p_publisher, p_publication_date, p_genre,
+            p_language, p_total_copies, p_total_copies, p_pages, p_description
+        );
+        
+        SET p_book_id = LAST_INSERT_ID();
 
-    SET p_success = TRUE; SET p_message = 'Book added successfully';
-    COMMIT;
+        -- Add book-author relationship
+        INSERT INTO book_authors(book_id, author_id) 
+        VALUES(p_book_id, p_author_id);
+
+        -- Log the action
+        INSERT INTO staff_logs(staff_id, action_type, target_table, target_id, new_values)
+        VALUES(p_staff_id, 'add_book', 'books', p_book_id, JSON_OBJECT('title', p_title));
+
+        SET p_success = TRUE;
+        SET p_message = 'Book added successfully';
+        
+        COMMIT;
+    END IF;
 END$$
 
 -- UpdateInventory: change total copies and fix available accordingly

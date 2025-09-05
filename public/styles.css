@@ -762,6 +762,8 @@ body {
 
 .form-group select[multiple] {
     height: 120px;
+    overflow-y: auto;
+    padding: 8px;
 }
 
 /* Modals */

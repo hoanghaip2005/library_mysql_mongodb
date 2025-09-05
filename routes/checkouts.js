@@ -177,20 +177,13 @@ router.get('/my-checkouts', authenticateToken, requireReader, [
             });
         }
 
-        const { status, page = 1, limit = 20 } = req.query;
         const userId = req.user.user_id;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
         const offset = (page - 1) * limit;
+        const status = req.query.status || null;
 
-        let whereClause = 'WHERE c.user_id = ?';
-        let queryParams = [userId];
-
-        if (status) {
-            whereClause += ' AND c.status = ?';
-            queryParams.push(status);
-        }
-
-        // Get checkouts with book details
-        const [checkouts] = await mysqlPool.query(`
+        let baseQuery = `
             SELECT 
                 c.checkout_id,
                 c.checkout_date,
@@ -211,30 +204,50 @@ router.get('/my-checkouts', authenticateToken, requireReader, [
             JOIN books b ON c.book_id = b.book_id
             LEFT JOIN book_authors ba ON b.book_id = ba.book_id
             LEFT JOIN authors a ON ba.author_id = a.author_id
-            ${whereClause}
-            GROUP BY c.checkout_id
+            WHERE c.user_id = ?
+        `;
+
+        let params = [userId];
+
+        if (status) {
+            baseQuery += ' AND c.status = ?';
+            params.push(status);
+        }
+
+        // Add GROUP BY, ORDER BY, and LIMIT clauses
+        baseQuery += `
+            GROUP BY c.checkout_id, c.checkout_date, c.due_date, c.return_date, 
+                     c.is_late, c.late_fee, c.status, b.book_id, b.title, b.isbn, 
+                     b.cover_image_url
             ORDER BY c.checkout_date DESC
-            LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
-        `);
+            LIMIT ${parseInt(offset)}, ${parseInt(limit)}
+        `;
 
-        // Get total count
-        const [countResult] = await mysqlPool.execute(`
-            SELECT COUNT(*) as total
-            FROM checkouts c
-            ${whereClause}
-        `, queryParams);
+        // Execute main query
+        const [checkouts] = await mysqlPool.execute(baseQuery, params);
 
-        const totalCheckouts = countResult[0].total;
+        // Prepare count query
+        let countQuery = 'SELECT COUNT(DISTINCT c.checkout_id) as total FROM checkouts c WHERE c.user_id = ?';
+        let countParams = [userId];
+
+        if (status) {
+            countQuery += ' AND c.status = ?';
+            countParams.push(status);
+        }
+
+        // Execute count query
+        const [countResult] = await mysqlPool.execute(countQuery, countParams);
+        const total = countResult[0].total;
 
         res.json({
             success: true,
             data: {
                 checkouts,
                 pagination: {
-                    currentPage: parseInt(page),
-                    totalPages: Math.ceil(totalCheckouts / limit),
-                    totalCheckouts,
-                    limit: parseInt(limit)
+                    currentPage: page,
+                    totalPages: Math.ceil(total / limit),
+                    totalItems: total,
+                    limit
                 }
             }
         });

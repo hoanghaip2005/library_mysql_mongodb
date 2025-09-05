@@ -9,6 +9,23 @@ const router = express.Router();
 router.use(authenticateToken);
 router.use(requireStaff);
 
+// Debug endpoint to list all authors
+router.get('/debug/authors', async (req, res) => {
+    try {
+        const [authors] = await mysqlPool.execute('SELECT * FROM authors');
+        res.json({
+            success: true,
+            data: authors
+        });
+    } catch (error) {
+        console.error('Debug authors error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to get authors'
+        });
+    }
+});
+
 // Get all books
 router.get('/books', [
     query('page').optional().isInt({ min: 1 }),
@@ -36,10 +53,13 @@ router.get('/books', [
             SELECT 
                 b.*,
                 GROUP_CONCAT(DISTINCT CONCAT(a.first_name, ' ', a.last_name)) as author_names,
-                GROUP_CONCAT(DISTINCT a.author_id) as author_ids
+                GROUP_CONCAT(DISTINCT a.author_id) as author_ids,
+                IFNULL(AVG(r.rating), 0) as average_rating,
+                COUNT(DISTINCT r.review_id) as total_reviews
             FROM books b
             LEFT JOIN book_authors ba ON b.book_id = ba.book_id
             LEFT JOIN authors a ON ba.author_id = a.author_id
+            LEFT JOIN reviews r ON b.book_id = r.book_id AND r.is_approved = TRUE
             ${whereClause}
             GROUP BY b.book_id
             ORDER BY b.title
@@ -91,8 +111,7 @@ router.post('/books', [
     body('totalCopies').isInt({ min: 1 }).toInt(),
     body('pages').optional({ nullable: true }).isInt({ min: 1 }).toInt(),
     body('description').optional({ nullable: true }).isLength({ max: 2000 }).trim(),
-    body('authorIds').isArray().notEmpty().withMessage('At least one author must be selected'),
-    body('authorIds.*').isInt({ min: 1 }).toInt()
+    body('authorId').isInt({ min: 1 }).toInt().withMessage('Author ID is required')
 ], async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -114,70 +133,85 @@ router.post('/books', [
             totalCopies,
             pages,
             description,
-            authorIds
+            authorId
         } = req.body;
 
         const staffId = req.user.user_id;
-
-        // Use stored procedure to add book
-        // Format date properly if it exists
         const formattedDate = publicationDate ? new Date(publicationDate).toISOString().split('T')[0] : null;
-        
-        // Ensure authorIds is an array of integers
-        const validAuthorIds = Array.isArray(authorIds) ? 
-            authorIds.map(id => parseInt(id)).filter(id => !isNaN(id)) : [];
 
-        if (validAuthorIds.length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'At least one valid author ID is required'
-            });
-        }
+        // Begin transaction
+        const connection = await mysqlPool.getConnection();
+        await connection.beginTransaction();
 
-        // Verify authors exist
-        const [authors] = await mysqlPool.execute(
-            'SELECT author_id FROM authors WHERE author_id IN (?)',
-            [validAuthorIds]
-        );
+        try {
+            // First verify the author exists
+            const [authors] = await connection.execute(
+                'SELECT author_id FROM authors WHERE author_id = ?',
+                [authorId]
+            );
 
-        if (authors.length !== validAuthorIds.length) {
-            return res.status(400).json({
-                success: false,
-                message: 'One or more author IDs are invalid'
-            });
-        }
+            if (authors.length === 0) {
+                await connection.rollback();
+                connection.release();
+                return res.status(400).json({
+                    success: false,
+                    message: `Author with ID ${authorId} does not exist`
+                });
+            }
 
-        const [result] = await mysqlPool.execute(
-            'CALL AddBook(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, @success, @message, @book_id)',
-            [
-                staffId,
-                isbn || null,
-                title,
-                publisher || null,
-                formattedDate,
-                genre || null,
-                language,
-                parseInt(totalCopies),
-                pages ? parseInt(pages) : null,
-                description || null,
-                JSON.stringify(validAuthorIds)
-            ]
-        );
+            // Insert the book
+            const [bookResult] = await connection.execute(
+                `INSERT INTO books (
+                    isbn, title, publisher, publication_date, genre,
+                    language, total_copies, available_copies, pages, description
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    isbn || null,
+                    title,
+                    publisher || null,
+                    formattedDate,
+                    genre || null,
+                    language,
+                    totalCopies,
+                    totalCopies,
+                    pages || null,
+                    description || null
+                ]
+            );
 
-        const [output] = await mysqlPool.execute('SELECT @success as success, @message as message, @book_id as book_id');
-        const { success, message, book_id } = output[0];
+            const bookId = bookResult.insertId;
 
-        if (success) {
+            // Add book-author relationship
+            await connection.execute(
+                'INSERT INTO book_authors (book_id, author_id) VALUES (?, ?)',
+                [bookId, authorId]
+            );
+
+            // Log the action
+            await connection.execute(
+                'INSERT INTO staff_logs (staff_id, action_type, target_table, target_id, new_values) VALUES (?, ?, ?, ?, ?)',
+                [
+                    staffId,
+                    'add_book',
+                    'books',
+                    bookId,
+                    JSON.stringify({ title, authorId })
+                ]
+            );
+
+            await connection.commit();
+            connection.release();
+
             res.status(201).json({
                 success: true,
-                message,
-                data: { bookId: book_id }
+                message: 'Book added successfully',
+                data: { bookId }
             });
-        } else {
-            res.status(400).json({
-                success: false,
-                message
-            });
+
+        } catch (error) {
+            await connection.rollback();
+            connection.release();
+            throw error;
         }
 
     } catch (error) {
