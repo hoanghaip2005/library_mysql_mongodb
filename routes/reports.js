@@ -83,15 +83,19 @@ router.get('/top-active-readers', [
     query('limit').optional().isInt({ min: 1, max: 100 })
 ], async (req, res) => {
     try {
-        const { startDate, endDate, limit = 20 } = req.query;
+        const limitNum = Number(req.query.limit) || 20;
+        const startDate = req.query.startDate;
+        const endDate = req.query.endDate;
 
-        let whereClause = '';
+        let dateFilter = '';
         let queryParams = [];
 
         if (startDate && endDate) {
-            whereClause = 'WHERE c.checkout_date BETWEEN ? AND ?';
-            queryParams = [startDate, endDate];
+            dateFilter = 'AND c.checkout_date BETWEEN ? AND ?';
+            queryParams.push(startDate, endDate);
         }
+
+        queryParams.push(limitNum);
 
         const [results] = await mysqlPool.execute(`
             SELECT 
@@ -101,23 +105,25 @@ router.get('/top-active-readers', [
                 u.last_name,
                 u.email,
                 u.date_joined,
-                COUNT(c.checkout_id) as total_checkouts,
-                COUNT(CASE WHEN c.status = 'returned' THEN 1 END) as books_returned,
-                COUNT(CASE WHEN c.status = 'active' THEN 1 END) as current_checkouts,
-                COUNT(CASE WHEN c.status = 'overdue' THEN 1 END) as overdue_books,
-                COUNT(CASE WHEN c.is_late = TRUE THEN 1 END) as late_returns,
-                AVG(c.late_fee) as average_late_fee,
-                COUNT(r.review_id) as total_reviews,
-                AVG(r.rating) as average_review_rating
+                COUNT(DISTINCT c.checkout_id) as total_checkouts,
+                COUNT(DISTINCT CASE WHEN c.status = 'returned' THEN c.checkout_id END) as books_returned,
+                COUNT(DISTINCT CASE WHEN c.status = 'active' THEN c.checkout_id END) as current_checkouts,
+                COUNT(DISTINCT CASE WHEN c.status = 'overdue' THEN c.checkout_id END) as overdue_books,
+                COUNT(DISTINCT CASE WHEN c.is_late = TRUE THEN c.checkout_id END) as late_returns,
+                COALESCE(AVG(c.late_fee), 0) as average_late_fee,
+                COUNT(DISTINCT r.review_id) as total_reviews,
+                COALESCE(AVG(r.rating), 0) as average_review_rating
             FROM users u
-            LEFT JOIN checkouts c ON u.user_id = c.user_id ${whereClause}
+            LEFT JOIN checkouts c ON u.user_id = c.user_id
             LEFT JOIN reviews r ON u.user_id = r.user_id AND r.is_approved = TRUE
-            WHERE u.user_type = 'reader' AND u.is_active = TRUE
+            WHERE u.user_type = 'reader' 
+            AND u.is_active = TRUE
+            ${dateFilter}
             GROUP BY u.user_id
             HAVING total_checkouts > 0
             ORDER BY total_checkouts DESC, books_returned DESC
             LIMIT ?
-        `, [...queryParams, parseInt(limit)]);
+        `, queryParams);
 
         res.json({
             success: true,
@@ -144,9 +150,32 @@ router.get('/low-availability-books', [
     query('limit').optional().isInt({ min: 1, max: 100 })
 ], async (req, res) => {
     try {
-        const { threshold = 2, limit = 50 } = req.query;
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Validation failed',
+                errors: errors.array()
+            });
+        }
+
+        const threshold = Number(req.query.threshold) || 2;
+        const limit = Number(req.query.limit) || 50;
+        const queryParams = [threshold, limit];
 
         const [results] = await mysqlPool.execute(`
+            WITH BookMetrics AS (
+                SELECT 
+                    b.book_id,
+                    COUNT(DISTINCT c.checkout_id) as total_checkouts,
+                    COUNT(DISTINCT CASE WHEN c.status = 'active' THEN c.checkout_id END) as current_checkouts,
+                    COALESCE(AVG(r.rating), 0) as average_rating,
+                    COUNT(DISTINCT r.review_id) as total_reviews
+                FROM books b
+                LEFT JOIN checkouts c ON b.book_id = c.book_id
+                LEFT JOIN reviews r ON b.book_id = r.book_id AND r.is_approved = TRUE
+                GROUP BY b.book_id
+            )
             SELECT 
                 b.book_id,
                 b.title,
@@ -157,31 +186,44 @@ router.get('/low-availability-books', [
                 b.available_copies,
                 (b.total_copies - b.available_copies) as checked_out_copies,
                 ROUND((b.available_copies / b.total_copies) * 100, 2) as availability_percentage,
-                COUNT(c.checkout_id) as total_checkouts,
-                COUNT(CASE WHEN c.status = 'active' THEN 1 END) as current_checkouts,
-                AVG(r.rating) as average_rating,
-                COUNT(r.review_id) as total_reviews,
+                bm.total_checkouts,
+                bm.current_checkouts,
+                bm.average_rating,
+                bm.total_reviews,
                 GROUP_CONCAT(
-                    CONCAT(a.first_name, ' ', a.last_name) 
+                    DISTINCT CONCAT(a.first_name, ' ', a.last_name) 
+                    ORDER BY a.last_name, a.first_name
                     SEPARATOR ', '
                 ) as authors
             FROM books b
-            LEFT JOIN checkouts c ON b.book_id = c.book_id
-            LEFT JOIN reviews r ON b.book_id = r.book_id AND r.is_approved = TRUE
+            LEFT JOIN BookMetrics bm ON b.book_id = bm.book_id
             LEFT JOIN book_authors ba ON b.book_id = ba.book_id
             LEFT JOIN authors a ON ba.author_id = a.author_id
-            WHERE b.is_retired = FALSE AND b.available_copies <= ?
-            GROUP BY b.book_id
-            ORDER BY availability_percentage ASC, total_checkouts DESC
+            WHERE b.is_retired = FALSE 
+            AND b.available_copies <= ?
+            GROUP BY 
+                b.book_id, 
+                bm.total_checkouts,
+                bm.current_checkouts,
+                bm.average_rating,
+                bm.total_reviews
+            ORDER BY availability_percentage ASC, bm.total_checkouts DESC
             LIMIT ?
-        `, [parseInt(threshold), parseInt(limit)]);
+        `, [thresholdNum, limitNum]);
 
         res.json({
             success: true,
             data: {
                 reportType: 'Books with Low Availability',
-                threshold: parseInt(threshold),
-                results
+                threshold: threshold,
+                results: results.map(book => ({
+                    ...book,
+                    total_checkouts: Number(book.total_checkouts),
+                    current_checkouts: Number(book.current_checkouts),
+                    average_rating: Number(book.average_rating),
+                    total_reviews: Number(book.total_reviews),
+                    authors: book.authors ? book.authors.split(', ') : []
+                }))
             }
         });
 

@@ -198,6 +198,61 @@
                                 </div>
                                 <div class="analytics-panel" id="highlights-panel">
                                     <h3>Most Highlighted Books</h3>
+                                    
+        <!-- Add Book Modal -->
+        <div class="modal" id="add-book-modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Add New Book</h3>
+                    <span class="close">&times;</span>
+                </div>
+                <form id="add-book-form">
+                    <div class="form-group">
+                        <label for="book-title">Title *</label>
+                        <input type="text" id="book-title" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="book-isbn">ISBN</label>
+                        <input type="text" id="book-isbn">
+                    </div>
+                    <div class="form-group">
+                        <label for="book-authors">Authors *</label>
+                        <select id="book-authors" multiple required>
+                            <!-- Authors will be loaded dynamically -->
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="book-publisher">Publisher</label>
+                        <input type="text" id="book-publisher">
+                    </div>
+                    <div class="form-group">
+                        <label for="book-publication-date">Publication Date</label>
+                        <input type="date" id="book-publication-date">
+                    </div>
+                    <div class="form-group">
+                        <label for="book-genre">Genre</label>
+                        <input type="text" id="book-genre">
+                    </div>
+                    <div class="form-group">
+                        <label for="book-language">Language</label>
+                        <input type="text" id="book-language" placeholder="English">
+                    </div>
+                    <div class="form-group">
+                        <label for="book-copies">Total Copies *</label>
+                        <input type="number" id="book-copies" min="1" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="book-pages">Pages</label>
+                        <input type="number" id="book-pages" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label for="book-description">Description</label>
+                        <textarea id="book-description"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Add Book</button>
+                </form>
+            </div>
+        </div>
                                     <div id="highlights-data"></div>
                                 </div>
                                 <div class="analytics-panel" id="reading-time-panel">
@@ -385,6 +440,44 @@
         </div>
     </div>
 
+    <!-- Edit Author Modal -->
+    <div class="modal" id="edit-author-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit Author</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <form id="edit-author-form">
+                <input type="hidden" id="edit-author-id">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="edit-author-first-name">First Name *</label>
+                        <input type="text" id="edit-author-first-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-author-last-name">Last Name *</label>
+                        <input type="text" id="edit-author-last-name" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="edit-author-birth-date">Birth Date</label>
+                        <input type="date" id="edit-author-birth-date">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-author-nationality">Nationality</label>
+                        <input type="text" id="edit-author-nationality">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="edit-author-biography">Biography</label>
+                    <textarea id="edit-author-biography" rows="4"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </form>
+        </div>
+    </div>
+
     <!-- Review Book Modal -->
     <div class="modal" id="review-book-modal">
         <div class="modal-content">
@@ -394,6 +487,7 @@
             </div>
             <form id="review-book-form">
                 <input type="hidden" id="review-book-id">
+                <input type="hidden" id="review-id">
                 <div class="form-group">
                     <label for="review-rating">Rating *</label>
                     <div class="rating-input">

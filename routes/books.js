@@ -5,6 +5,38 @@ const { optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Get all authors
+router.get('/authors', async (req, res) => {
+    try {
+        const [authors] = await mysqlPool.execute(`
+            SELECT 
+                a.*,
+                COUNT(DISTINCT b.book_id) as book_count
+            FROM authors a
+            LEFT JOIN book_authors ba ON a.author_id = ba.author_id
+            LEFT JOIN books b ON ba.book_id = b.book_id AND b.is_retired = FALSE
+            GROUP BY a.author_id
+            ORDER BY a.last_name, a.first_name
+        `);
+
+        res.json({
+            success: true,
+            data: {
+                authors: authors.map(author => ({
+                    ...author,
+                    book_count: Number(author.book_count)
+                }))
+            }
+        });
+    } catch (error) {
+        console.error('Get authors error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch authors'
+        });
+    }
+});
+
 // Search books with filters
 router.get('/search', [
     query('q').optional().isLength({ min: 1, max: 200 }).trim(),
@@ -64,63 +96,74 @@ router.get('/search', [
                 b.book_id,
                 b.isbn,
                 b.title,
-                b.publisher,
+                COALESCE(b.publisher, 'Not Specified') as publisher,
                 b.publication_date,
-                b.genre,
-                b.language,
-                b.total_copies,
-                b.available_copies,
-                b.pages,
-                b.description,
-                b.cover_image_url,
-                b.average_rating,
-                b.total_reviews,
-                GROUP_CONCAT(
-                    CONCAT(a.first_name, ' ', a.last_name) 
+                COALESCE(b.genre, 'General') as genre,
+                COALESCE(b.language, 'English') as language,
+                COALESCE(b.total_copies, 0) as total_copies,
+                COALESCE(b.available_copies, 0) as available_copies,
+                COALESCE(b.pages, 0) as pages,
+                COALESCE(b.description, 'No description available') as description,
+                COALESCE(b.cover_image_url, '') as cover_image_url,
+                COALESCE(b.average_rating, 0) as average_rating,
+                COALESCE(b.total_reviews, 0) as total_reviews,
+                COALESCE(GROUP_CONCAT(
+                    DISTINCT CONCAT(a.first_name, ' ', a.last_name) 
                     SEPARATOR ', '
-                ) as authors
+                ), 'Unknown Author') as authors
             FROM books b
             LEFT JOIN book_authors ba ON b.book_id = ba.book_id
             LEFT JOIN authors a ON ba.author_id = a.author_id
             WHERE ${whereConditions.join(' AND ')}
             GROUP BY b.book_id
             ORDER BY b.title
-            LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}
+            LIMIT ? OFFSET ?
         `;
+
+        // Add limit and offset to queryParams
+        queryParams.push(parseInt(limit), parseInt(offset));
 
         // Execute search query
-        const [books] = await mysqlPool.query(baseQuery);
+        let books = [];
+        let totalBooks = 0;
+        
+        try {
+            [books] = await mysqlPool.query(baseQuery, queryParams);
 
-        // Get total count for pagination
-        const countQuery = `
-            SELECT COUNT(DISTINCT b.book_id) as total
-            FROM books b
-            LEFT JOIN book_authors ba ON b.book_id = ba.book_id
-            LEFT JOIN authors a ON ba.author_id = a.author_id
-            WHERE ${whereConditions.join(' AND ')}
-        `;
+            // Get total count for pagination
+            const countQuery = `
+                SELECT COUNT(DISTINCT b.book_id) as total
+                FROM books b
+                LEFT JOIN book_authors ba ON b.book_id = ba.book_id
+                LEFT JOIN authors a ON ba.author_id = a.author_id
+                WHERE ${whereConditions.join(' AND ')}
+            `;
 
-        const [countResult] = await mysqlPool.query(countQuery);
-        const totalBooks = countResult[0].total;
+            const [countResult] = await mysqlPool.query(countQuery, queryParams.slice(0, -2)); // Remove limit and offset
+            totalBooks = countResult[0].total;
 
-        res.json({
-            success: true,
-            data: {
-                books,
-                pagination: {
-                    currentPage: parseInt(page),
-                    totalPages: Math.ceil(totalBooks / limit),
-                    totalBooks,
-                    limit: parseInt(limit)
+            res.json({
+                success: true,
+                data: {
+                    books,
+                    pagination: {
+                        currentPage: parseInt(page),
+                        totalPages: Math.ceil(totalBooks / limit),
+                        totalBooks,
+                        limit: parseInt(limit)
+                    }
                 }
-            }
-        });
+            });
+        } catch (dbError) {
+            console.error('Database query error:', dbError);
+            throw new Error('Database error while searching books');
+        }
 
     } catch (error) {
         console.error('Book search error:', error);
         res.status(500).json({
             success: false,
-            message: 'Search failed',
+            message: error.message || 'Search failed',
             error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
         });
     }
@@ -141,12 +184,25 @@ router.get('/:id', optionalAuth, async (req, res) => {
         // Get book details with authors
         const [books] = await mysqlPool.execute(`
             SELECT 
-                b.*,
-                GROUP_CONCAT(
-                    CONCAT(a.first_name, ' ', a.last_name) 
+                b.book_id,
+                b.isbn,
+                b.title,
+                COALESCE(b.publisher, 'Not Specified') as publisher,
+                b.publication_date,
+                COALESCE(b.genre, 'General') as genre,
+                COALESCE(b.language, 'English') as language,
+                COALESCE(b.total_copies, 0) as total_copies,
+                COALESCE(b.available_copies, 0) as available_copies,
+                COALESCE(b.pages, 0) as pages,
+                COALESCE(b.description, 'No description available') as description,
+                COALESCE(b.cover_image_url, '') as cover_image_url,
+                COALESCE(b.average_rating, 0) as average_rating,
+                COALESCE(b.total_reviews, 0) as total_reviews,
+                COALESCE(GROUP_CONCAT(
+                    DISTINCT CONCAT(a.first_name, ' ', a.last_name) 
                     SEPARATOR ', '
-                ) as authors,
-                GROUP_CONCAT(a.author_id ORDER BY ba.author_id) as author_ids
+                ), 'Unknown Author') as authors,
+                COALESCE(GROUP_CONCAT(a.author_id ORDER BY ba.author_id), '') as author_ids
             FROM books b
             LEFT JOIN book_authors ba ON b.book_id = ba.book_id
             LEFT JOIN authors a ON ba.author_id = a.author_id
@@ -254,36 +310,58 @@ router.get('/publishers/list', async (req, res) => {
     }
 });
 
-// Get popular books (by checkout count)
+
+
+// Get popular books
 router.get('/popular/list', async (req, res) => {
     try {
-        const { limit = 10 } = req.query;
+        const limitNum = parseInt(req.query.limit) || 6;
+        console.log('Getting popular books with limit:', limitNum);
 
-        const [popularBooks] = await mysqlPool.query(`
+        // Get books
+        const [books] = await mysqlPool.query(`
             SELECT 
                 b.book_id,
+                b.isbn,
                 b.title,
-                b.cover_image_url,
-                b.average_rating,
-                b.total_reviews,
-                COUNT(c.checkout_id) as checkout_count,
-                GROUP_CONCAT(
-                    CONCAT(a.first_name, ' ', a.last_name) 
-                    SEPARATOR ', '
-                ) as authors
+                COALESCE(b.publisher, 'Not Specified') as publisher,
+                b.publication_date,
+                COALESCE(b.genre, 'General') as genre,
+                COALESCE(b.language, 'English') as language,
+                COALESCE(b.total_copies, 0) as total_copies,
+                COALESCE(b.available_copies, 0) as available_copies,
+                COALESCE(b.pages, 0) as pages,
+                COALESCE(b.description, 'No description available') as description,
+                COALESCE(b.cover_image_url, '') as cover_image_url,
+                COALESCE(b.average_rating, 0) as average_rating,
+                COALESCE(b.total_reviews, 0) as total_reviews
             FROM books b
-            LEFT JOIN checkouts c ON b.book_id = c.book_id
-            LEFT JOIN book_authors ba ON b.book_id = ba.book_id
-            LEFT JOIN authors a ON ba.author_id = a.author_id
             WHERE b.is_retired = FALSE
-            GROUP BY b.book_id
-            ORDER BY checkout_count DESC, b.average_rating DESC
-            LIMIT ${parseInt(limit)}
-        `);
+            ORDER BY b.average_rating DESC, b.total_reviews DESC
+            LIMIT ?
+        `, [limitNum]);
+
+        console.log('Raw book data:', books);
+
+        // Get authors for each book
+        for (const book of books) {
+            const [authors] = await mysqlPool.query(`
+                SELECT 
+                    CONCAT(a.first_name, ' ', a.last_name) as author_name
+                FROM book_authors ba
+                JOIN authors a ON ba.author_id = a.author_id
+                WHERE ba.book_id = ?
+                ORDER BY ba.author_id
+            `, [book.book_id]);
+            
+            book.authors = authors.map(a => a.author_name).join(', ') || 'Unknown Author';
+        }
+
+        console.log('Books with authors:', books);
 
         res.json({
             success: true,
-            data: popularBooks
+            data: books
         });
 
     } catch (error) {
@@ -304,15 +382,23 @@ router.get('/recent/list', async (req, res) => {
         const [recentBooks] = await mysqlPool.execute(`
             SELECT 
                 b.book_id,
+                b.isbn,
                 b.title,
-                b.cover_image_url,
-                b.average_rating,
-                b.total_reviews,
-                b.created_at,
-                GROUP_CONCAT(
-                    CONCAT(a.first_name, ' ', a.last_name) 
+                COALESCE(b.publisher, 'Not Specified') as publisher,
+                b.publication_date,
+                COALESCE(b.genre, 'General') as genre,
+                COALESCE(b.language, 'English') as language,
+                COALESCE(b.total_copies, 0) as total_copies,
+                COALESCE(b.available_copies, 0) as available_copies,
+                COALESCE(b.pages, 0) as pages,
+                COALESCE(b.description, 'No description available') as description,
+                COALESCE(b.cover_image_url, '') as cover_image_url,
+                COALESCE(b.average_rating, 0) as average_rating,
+                COALESCE(b.total_reviews, 0) as total_reviews,
+                COALESCE(GROUP_CONCAT(
+                    DISTINCT CONCAT(a.first_name, ' ', a.last_name) 
                     SEPARATOR ', '
-                ) as authors
+                ), 'Unknown Author') as authors
             FROM books b
             LEFT JOIN book_authors ba ON b.book_id = ba.book_id
             LEFT JOIN authors a ON ba.author_id = a.author_id

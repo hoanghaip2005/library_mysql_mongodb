@@ -4,14 +4,13 @@ const { MongoClient } = require('mongodb');
 // MySQL Configuration
 const mysqlConfig = {
     host: process.env.MYSQL_HOST || 'localhost',
-    port: process.env.MYSQL_PORT || 3306,
+    port: parseInt(process.env.MYSQL_PORT) || 3306,
     user: process.env.MYSQL_USER || 'root',
-    password: process.env.MYSQL_PASSWORD || '',
+    password: process.env.MYSQL_PASSWORD || 'xuanlanh1',  // Use your actual password here
     database: process.env.MYSQL_DATABASE || 'smart_library',
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0,
-    acquireTimeout: 60000
+    queueLimit: 0
 };
 
 // MongoDB Configuration

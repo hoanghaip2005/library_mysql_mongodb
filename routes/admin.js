@@ -9,19 +9,90 @@ const router = express.Router();
 router.use(authenticateToken);
 router.use(requireStaff);
 
+// Get all books
+router.get('/books', [
+    query('page').optional().isInt({ min: 1 }),
+    query('limit').optional().isInt({ min: 1, max: 100 }),
+    query('search').optional().isLength({ min: 1, max: 100 }).trim()
+], async (req, res) => {
+    try {
+        const pageNum = Number(req.query.page) || 1;
+        const limitNum = Number(req.query.limit) || 50;
+        const offsetNum = (pageNum - 1) * limitNum;
+        const search = req.query.search;
+
+        let whereClause = 'WHERE b.is_retired = FALSE';
+        let queryParams = [];
+
+        if (search) {
+            whereClause += ' AND (b.title LIKE ? OR b.isbn LIKE ? OR b.publisher LIKE ?)';
+            const searchTerm = `%${search}%`;
+            queryParams.push(searchTerm, searchTerm, searchTerm);
+        }
+
+        queryParams.push(limitNum, offsetNum);
+
+        const [books] = await mysqlPool.execute(`
+            SELECT 
+                b.*,
+                GROUP_CONCAT(DISTINCT CONCAT(a.first_name, ' ', a.last_name)) as author_names,
+                GROUP_CONCAT(DISTINCT a.author_id) as author_ids
+            FROM books b
+            LEFT JOIN book_authors ba ON b.book_id = ba.book_id
+            LEFT JOIN authors a ON ba.author_id = a.author_id
+            ${whereClause}
+            GROUP BY b.book_id
+            ORDER BY b.title
+            LIMIT ? OFFSET ?
+        `, queryParams);
+
+        // Get total count
+        const [countResult] = await mysqlPool.execute(`
+            SELECT COUNT(DISTINCT b.book_id) as total
+            FROM books b
+            LEFT JOIN book_authors ba ON b.book_id = ba.book_id
+            LEFT JOIN authors a ON ba.author_id = a.author_id
+            ${whereClause}
+        `, queryParams);
+
+        res.json({
+            success: true,
+            data: {
+                books: books.map(book => ({
+                    ...book,
+                    author_names: book.author_names ? book.author_names.split(',') : [],
+                    author_ids: book.author_ids ? book.author_ids.split(',').map(Number) : []
+                })),
+                pagination: {
+                    page: pageNum,
+                    limit: limitNum,
+                    total: countResult[0].total
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('Get books error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to get books'
+        });
+    }
+});
+
 // Add a new book
 router.post('/books', [
-    body('isbn').optional().isLength({ min: 10, max: 20 }).trim(),
-    body('title').isLength({ min: 1, max: 200 }).trim(),
-    body('publisher').optional().isLength({ max: 100 }).trim(),
-    body('publicationDate').optional().isISO8601(),
-    body('genre').optional().isLength({ max: 50 }).trim(),
-    body('language').optional().isLength({ max: 20 }).trim(),
-    body('totalCopies').isInt({ min: 1 }),
-    body('pages').optional().isInt({ min: 1 }),
-    body('description').optional().isLength({ max: 2000 }).trim(),
-    body('authorIds').isArray({ min: 1 }),
-    body('authorIds.*').isInt({ min: 1 })
+    body('isbn').optional({ nullable: true }).isLength({ max: 20 }).trim(),
+    body('title').notEmpty().isLength({ max: 200 }).trim(),
+    body('publisher').optional({ nullable: true }).isLength({ max: 100 }).trim(),
+    body('publicationDate').optional({ nullable: true }).isISO8601().toDate(),
+    body('genre').optional({ nullable: true }).isLength({ max: 50 }).trim(),
+    body('language').optional({ nullable: true }).isLength({ max: 20 }).trim().default('English'),
+    body('totalCopies').isInt({ min: 1 }).toInt(),
+    body('pages').optional({ nullable: true }).isInt({ min: 1 }).toInt(),
+    body('description').optional({ nullable: true }).isLength({ max: 2000 }).trim(),
+    body('authorIds').isArray().notEmpty().withMessage('At least one author must be selected'),
+    body('authorIds.*').isInt({ min: 1 }).toInt()
 ], async (req, res) => {
     try {
         const errors = validationResult(req);
@@ -49,6 +120,33 @@ router.post('/books', [
         const staffId = req.user.user_id;
 
         // Use stored procedure to add book
+        // Format date properly if it exists
+        const formattedDate = publicationDate ? new Date(publicationDate).toISOString().split('T')[0] : null;
+        
+        // Ensure authorIds is an array of integers
+        const validAuthorIds = Array.isArray(authorIds) ? 
+            authorIds.map(id => parseInt(id)).filter(id => !isNaN(id)) : [];
+
+        if (validAuthorIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'At least one valid author ID is required'
+            });
+        }
+
+        // Verify authors exist
+        const [authors] = await mysqlPool.execute(
+            'SELECT author_id FROM authors WHERE author_id IN (?)',
+            [validAuthorIds]
+        );
+
+        if (authors.length !== validAuthorIds.length) {
+            return res.status(400).json({
+                success: false,
+                message: 'One or more author IDs are invalid'
+            });
+        }
+
         const [result] = await mysqlPool.execute(
             'CALL AddBook(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, @success, @message, @book_id)',
             [
@@ -56,13 +154,13 @@ router.post('/books', [
                 isbn || null,
                 title,
                 publisher || null,
-                publicationDate || null,
+                formattedDate,
                 genre || null,
                 language,
-                totalCopies,
-                pages || null,
+                parseInt(totalCopies),
+                pages ? parseInt(pages) : null,
                 description || null,
-                JSON.stringify(authorIds)
+                JSON.stringify(validAuthorIds)
             ]
         );
 
@@ -256,8 +354,10 @@ router.get('/authors', [
     query('search').optional().isLength({ min: 1, max: 100 }).trim()
 ], async (req, res) => {
     try {
-        const { page = 1, limit = 50, search } = req.query;
-        const offset = (page - 1) * limit;
+        const pageNum = Number(req.query.page) || 1;
+        const limitNum = Number(req.query.limit) || 50;
+        const offsetNum = (pageNum - 1) * limitNum;
+        const search = req.query.search;
 
         let whereClause = '';
         let queryParams = [];
@@ -265,8 +365,10 @@ router.get('/authors', [
         if (search) {
             whereClause = 'WHERE (a.first_name LIKE ? OR a.last_name LIKE ? OR CONCAT(a.first_name, " ", a.last_name) LIKE ?)';
             const searchTerm = `%${search}%`;
-            queryParams = [searchTerm, searchTerm, searchTerm];
+            queryParams.push(searchTerm, searchTerm, searchTerm);
         }
+
+        queryParams.push(limitNum, offsetNum);
 
         const [authors] = await mysqlPool.execute(`
             SELECT 
@@ -278,7 +380,7 @@ router.get('/authors', [
             GROUP BY a.author_id
             ORDER BY a.last_name, a.first_name
             LIMIT ? OFFSET ?
-        `, [...queryParams, parseInt(limit), parseInt(offset)]);
+        `, queryParams);
 
         // Get total count
         const [countResult] = await mysqlPool.execute(`
@@ -462,6 +564,90 @@ router.get('/users', [
         res.status(500).json({
             success: false,
             message: 'Failed to fetch users',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+    }
+});
+
+// Delete an author
+router.delete('/authors/:authorId', async (req, res) => {
+    try {
+        const authorId = parseInt(req.params.authorId);
+        const staffId = req.user.user_id;
+
+        if (isNaN(authorId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid author ID'
+            });
+        }
+
+        // Start transaction
+        const connection = await mysqlPool.getConnection();
+        await connection.beginTransaction();
+
+        try {
+            // Check if author exists and get their name for logging
+            const [author] = await connection.execute(
+                'SELECT first_name, last_name FROM authors WHERE author_id = ?',
+                [authorId]
+            );
+
+            if (!author.length) {
+                await connection.rollback();
+                connection.release();
+                return res.status(404).json({
+                    success: false,
+                    message: 'Author not found'
+                });
+            }
+
+            // Remove author from book_authors (cascade will handle this, but we want the count)
+            const [bookAuthors] = await connection.execute(
+                'SELECT COUNT(*) as count FROM book_authors WHERE author_id = ?',
+                [authorId]
+            );
+
+            // Delete the author
+            await connection.execute(
+                'DELETE FROM authors WHERE author_id = ?',
+                [authorId]
+            );
+
+            // Log the action
+            await connection.execute(
+                'INSERT INTO staff_logs (staff_id, action_type, target_table, target_id, old_values) VALUES (?, ?, ?, ?, ?)',
+                [
+                    staffId,
+                    'delete_author',
+                    'authors',
+                    authorId,
+                    JSON.stringify({
+                        name: `${author[0].first_name} ${author[0].last_name}`,
+                        associated_books: bookAuthors[0].count
+                    })
+                ]
+            );
+
+            await connection.commit();
+            connection.release();
+
+            res.json({
+                success: true,
+                message: 'Author deleted successfully'
+            });
+
+        } catch (error) {
+            await connection.rollback();
+            connection.release();
+            throw error;
+        }
+
+    } catch (error) {
+        console.error('Delete author error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to delete author',
             error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
         });
     }

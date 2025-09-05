@@ -5,6 +5,42 @@ const { authenticateToken, requireReader } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Get recent reviews
+router.get('/recent', async (req, res) => {
+    try {
+        const [reviews] = await mysqlPool.execute(`
+            SELECT 
+                r.*,
+                u.username,
+                u.first_name,
+                u.last_name,
+                b.title,
+                b.isbn,
+                b.genre
+            FROM reviews r
+            JOIN users u ON r.user_id = u.user_id
+            JOIN books b ON r.book_id = b.book_id
+            WHERE r.is_approved = TRUE
+            ORDER BY r.review_date DESC
+            LIMIT 10
+        `);
+
+        res.json({
+            success: true,
+            data: reviews.map(review => ({
+                ...review,
+                rating: Number(review.rating)
+            }))
+        });
+    } catch (error) {
+        console.error('Get recent reviews error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch recent reviews'
+        });
+    }
+});
+
 // Submit a book review
 router.post('/submit', authenticateToken, requireReader, [
     body('bookId').isInt({ min: 1 }),

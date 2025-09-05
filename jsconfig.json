@@ -1,0 +1,16 @@
+{
+    "compilerOptions": {
+        "target": "es2020",
+        "allowJs": true,
+        "checkJs": false,
+        "module": "commonjs",
+        "moduleResolution": "bundler",
+        "resolveJsonModule": true,
+        "jsx": "preserve",
+        "ignoreDeprecations": "5.0"
+    },
+    "exclude": [
+        "node_modules",
+        "**/node_modules/*"
+    ]
+}

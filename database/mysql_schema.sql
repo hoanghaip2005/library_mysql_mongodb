@@ -1,145 +1,179 @@
--- Smart Library Platform - MySQL Database Schema
--- Database: smart_library
+-- Smart Library - MySQL schema rebuilt to match current routes
 
+-- Create database if not exists (safety for manual runs)
 CREATE DATABASE IF NOT EXISTS smart_library;
 USE smart_library;
 
+SET NAMES utf8mb4;
+SET time_zone = '+00:00';
+
 -- Users table (readers and staff)
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     user_id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(50) UNIQUE NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    email VARCHAR(120) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     first_name VARCHAR(50) NOT NULL,
     last_name VARCHAR(50) NOT NULL,
-    user_type ENUM('reader', 'staff') NOT NULL DEFAULT 'reader',
-    phone VARCHAR(20),
-    address TEXT,
-    date_joined TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    user_type ENUM('reader','staff') NOT NULL DEFAULT 'reader',
+    phone VARCHAR(20) NULL,
+    address VARCHAR(500) NULL,
+    date_joined DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_users_user_type (user_type),
+    INDEX idx_users_active (is_active)
 );
 
--- Authors table
-CREATE TABLE authors (
+-- Authors
+CREATE TABLE IF NOT EXISTS authors (
     author_id INT AUTO_INCREMENT PRIMARY KEY,
     first_name VARCHAR(50) NOT NULL,
     last_name VARCHAR(50) NOT NULL,
-    birth_date DATE,
-    nationality VARCHAR(50),
-    biography TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    birth_date DATE NULL,
+    nationality VARCHAR(50) NULL,
+    biography TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_authors_name (last_name, first_name)
 );
 
--- Books table
-CREATE TABLE books (
+-- Books
+CREATE TABLE IF NOT EXISTS books (
     book_id INT AUTO_INCREMENT PRIMARY KEY,
-    isbn VARCHAR(20) UNIQUE,
+    isbn VARCHAR(20) NULL,
     title VARCHAR(200) NOT NULL,
-    publisher VARCHAR(100),
-    publication_date DATE,
-    genre VARCHAR(50),
-    language VARCHAR(20) DEFAULT 'English',
-    total_copies INT NOT NULL DEFAULT 0,
-    available_copies INT NOT NULL DEFAULT 0,
-    pages INT,
-    description TEXT,
-    cover_image_url VARCHAR(255),
-    is_retired BOOLEAN DEFAULT FALSE,
-    average_rating DECIMAL(3,2) DEFAULT 0.00,
-    total_reviews INT DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    publisher VARCHAR(100) NULL,
+    publication_date DATE NULL,
+    genre VARCHAR(50) NULL,
+    language VARCHAR(20) NOT NULL DEFAULT 'English',
+    total_copies INT NOT NULL DEFAULT 1,
+    available_copies INT NOT NULL DEFAULT 1,
+    pages INT NULL,
+    description TEXT NULL,
+    cover_image_url VARCHAR(255) NULL,
+    average_rating DECIMAL(3,2) NOT NULL DEFAULT 0.00,
+    total_reviews INT NOT NULL DEFAULT 0,
+    is_retired TINYINT(1) NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_books_title (title),
+    INDEX idx_books_genre (genre),
+    INDEX idx_books_publisher (publisher),
+    INDEX idx_books_retired (is_retired)
 );
 
--- Book-Author relationship (many-to-many)
-CREATE TABLE book_authors (
-    book_id INT,
-    author_id INT,
+-- Book-Author join
+CREATE TABLE IF NOT EXISTS book_authors (
+    book_id INT NOT NULL,
+    author_id INT NOT NULL,
     PRIMARY KEY (book_id, author_id),
-    FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE,
-    FOREIGN KEY (author_id) REFERENCES authors(author_id) ON DELETE CASCADE
+    CONSTRAINT fk_ba_book FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE,
+    CONSTRAINT fk_ba_author FOREIGN KEY (author_id) REFERENCES authors(author_id) ON DELETE CASCADE,
+    INDEX idx_ba_author (author_id)
 );
 
--- Checkouts table
-CREATE TABLE checkouts (
+-- Checkouts
+CREATE TABLE IF NOT EXISTS checkouts (
     checkout_id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     book_id INT NOT NULL,
-    checkout_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    due_date TIMESTAMP NOT NULL,
-    return_date TIMESTAMP NULL,
-    is_late BOOLEAN DEFAULT FALSE,
-    late_fee DECIMAL(10,2) DEFAULT 0.00,
-    status ENUM('active', 'returned', 'overdue') DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
-    FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE
+    checkout_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    due_date DATETIME NOT NULL,
+    return_date DATETIME NULL,
+    is_late TINYINT(1) NOT NULL DEFAULT 0,
+    late_fee DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    status ENUM('active','returned','overdue') NOT NULL DEFAULT 'active',
+    CONSTRAINT fk_checkouts_user FOREIGN KEY (user_id) REFERENCES users(user_id),
+    CONSTRAINT fk_checkouts_book FOREIGN KEY (book_id) REFERENCES books(book_id),
+    INDEX idx_checkouts_user (user_id),
+    INDEX idx_checkouts_book (book_id),
+    INDEX idx_checkouts_status (status)
 );
 
--- Reviews table
-CREATE TABLE reviews (
+-- Reviews
+CREATE TABLE IF NOT EXISTS reviews (
     review_id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     book_id INT NOT NULL,
-    rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
-    comment TEXT,
-    review_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    is_approved BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
-    FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE,
-    UNIQUE KEY unique_user_book_review (user_id, book_id)
+    rating INT NOT NULL,
+    comment TEXT NULL,
+    review_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    is_approved TINYINT(1) NOT NULL DEFAULT 1,
+    CONSTRAINT fk_reviews_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_reviews_book FOREIGN KEY (book_id) REFERENCES books(book_id) ON DELETE CASCADE,
+    INDEX idx_reviews_book (book_id),
+    INDEX idx_reviews_user (user_id),
+    INDEX idx_reviews_rating (rating),
+    INDEX idx_reviews_approved (is_approved)
 );
 
--- Staff logs table
-CREATE TABLE staff_logs (
+-- Staff action logs (admin routes)
+CREATE TABLE IF NOT EXISTS staff_logs (
     log_id INT AUTO_INCREMENT PRIMARY KEY,
     staff_id INT NOT NULL,
-    action_type ENUM('add_book', 'update_inventory', 'retire_book', 'add_author', 'update_book') NOT NULL,
-    target_table VARCHAR(50),
-    target_id INT,
-    old_values JSON,
-    new_values JSON,
-    action_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    ip_address VARCHAR(45),
-    user_agent TEXT,
-    FOREIGN KEY (staff_id) REFERENCES users(user_id) ON DELETE CASCADE
+    action_type VARCHAR(50) NOT NULL,
+    target_table VARCHAR(50) NOT NULL,
+    target_id INT NULL,
+    old_values JSON NULL,
+    new_values JSON NULL,
+    action_timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_staff_logs_staff FOREIGN KEY (staff_id) REFERENCES users(user_id),
+    INDEX idx_staff_logs_action_time (action_timestamp),
+    INDEX idx_staff_logs_action_type (action_type)
 );
 
--- Create indexes for optimization
--- Indexes for book search optimization
-CREATE INDEX idx_books_title ON books(title);
-CREATE INDEX idx_books_genre ON books(genre);
-CREATE INDEX idx_books_publisher ON books(publisher);
-CREATE INDEX idx_books_isbn ON books(isbn);
-CREATE INDEX idx_books_available_copies ON books(available_copies);
+-- Helper: maintain book aggregates (average_rating, total_reviews, available copies)
+DELIMITER $$
+DROP TRIGGER IF EXISTS trg_reviews_after_insert$$
+CREATE TRIGGER trg_reviews_after_insert
+AFTER INSERT ON reviews
+FOR EACH ROW
+BEGIN
+    UPDATE books b
+    SET 
+        b.total_reviews = (
+            SELECT COUNT(*) FROM reviews r WHERE r.book_id = NEW.book_id AND r.is_approved = 1
+        ),
+        b.average_rating = (
+            SELECT IFNULL(AVG(rating), 0) FROM reviews r WHERE r.book_id = NEW.book_id AND r.is_approved = 1
+        )
+    WHERE b.book_id = NEW.book_id;
+END$$
 
--- Indexes for author search
-CREATE INDEX idx_authors_name ON authors(last_name, first_name);
+DROP TRIGGER IF EXISTS trg_reviews_after_update$$
+CREATE TRIGGER trg_reviews_after_update
+AFTER UPDATE ON reviews
+FOR EACH ROW
+BEGIN
+    UPDATE books b
+    SET 
+        b.total_reviews = (
+            SELECT COUNT(*) FROM reviews r WHERE r.book_id = NEW.book_id AND r.is_approved = 1
+        ),
+        b.average_rating = (
+            SELECT IFNULL(AVG(rating), 0) FROM reviews r WHERE r.book_id = NEW.book_id AND r.is_approved = 1
+        )
+    WHERE b.book_id = NEW.book_id;
+END$$
 
--- Indexes for checkout operations
-CREATE INDEX idx_checkouts_user_id ON checkouts(user_id);
-CREATE INDEX idx_checkouts_book_id ON checkouts(book_id);
-CREATE INDEX idx_checkouts_due_date ON checkouts(due_date);
-CREATE INDEX idx_checkouts_status ON checkouts(status);
-CREATE INDEX idx_checkouts_checkout_date ON checkouts(checkout_date);
+DROP TRIGGER IF EXISTS trg_reviews_after_delete$$
+CREATE TRIGGER trg_reviews_after_delete
+AFTER DELETE ON reviews
+FOR EACH ROW
+BEGIN
+    UPDATE books b
+    SET 
+        b.total_reviews = (
+            SELECT COUNT(*) FROM reviews r WHERE r.book_id = OLD.book_id AND r.is_approved = 1
+        ),
+        b.average_rating = (
+            SELECT IFNULL(AVG(rating), 0) FROM reviews r WHERE r.book_id = OLD.book_id AND r.is_approved = 1
+        )
+    WHERE b.book_id = OLD.book_id;
+END$$
 
--- Indexes for reviews
-CREATE INDEX idx_reviews_book_id ON reviews(book_id);
-CREATE INDEX idx_reviews_user_id ON reviews(user_id);
-CREATE INDEX idx_reviews_rating ON reviews(rating);
+DELIMITER ;
 
--- Indexes for staff logs
-CREATE INDEX idx_staff_logs_staff_id ON staff_logs(staff_id);
-CREATE INDEX idx_staff_logs_action_type ON staff_logs(action_type);
-CREATE INDEX idx_staff_logs_timestamp ON staff_logs(action_timestamp);
 
--- Composite indexes for common queries
-CREATE INDEX idx_books_search ON books(title, genre, publisher, available_copies);
-CREATE INDEX idx_checkouts_user_status ON checkouts(user_id, status);
-CREATE INDEX idx_checkouts_book_status ON checkouts(book_id, status);

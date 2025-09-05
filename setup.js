@@ -68,11 +68,11 @@ class SetupManager {
             console.log('✅ Connected to MySQL server');
             
             // Create database
-            await connection.execute('CREATE DATABASE IF NOT EXISTS smart_library');
+            await connection.query('CREATE DATABASE IF NOT EXISTS smart_library');
             console.log('✅ Database "smart_library" created/verified');
             
             // Switch to the database
-            await connection.execute('USE smart_library');
+            await connection.query('USE smart_library');
             
             // Read and execute schema files
             const schemaFiles = [
@@ -82,11 +82,53 @@ class SetupManager {
                 'database/optimization_tests.sql'
             ];
             
+            // Helper: execute SQL file with DELIMITER-aware parser
+            const executeSqlFile = async (conn, filePath) => {
+                const sqlText = fs.readFileSync(filePath, 'utf8');
+                let delimiter = ';';
+                let buffer = '';
+                const lines = sqlText.split(/\r?\n/);
+                const executeStatement = async (stmt) => {
+                    const trimmed = stmt.trim();
+                    if (trimmed.length === 0) return;
+                    try {
+                        await conn.query(trimmed);
+                    } catch (e) {
+                        console.error(`\n❗ SQL error in ${filePath}:`, e.message);
+                        console.error('Failed statement snippet:', trimmed.substring(0, 120).replace(/\s+/g, ' ') + (trimmed.length > 120 ? '...' : ''));
+                        throw e;
+                    }
+                };
+                for (let rawLine of lines) {
+                    const line = rawLine;
+                    const delimMatch = line.match(/^\s*DELIMITER\s+(.+)\s*$/i);
+                    if (delimMatch) {
+                        // Flush any pending statement before changing delimiter
+                        if (buffer.trim().length > 0) {
+                            await executeStatement(buffer);
+                            buffer = '';
+                        }
+                        delimiter = delimMatch[1];
+                        continue;
+                    }
+                    buffer += line + '\n';
+                    // Check if buffer ends with current delimiter at line end
+                    if (buffer.trim().endsWith(delimiter)) {
+                        const stmt = buffer.trim().slice(0, -delimiter.length);
+                        await executeStatement(stmt);
+                        buffer = '';
+                    }
+                }
+                // Flush remaining
+                if (buffer.trim().length > 0) {
+                    await executeStatement(buffer);
+                }
+            };
+
             for (const file of schemaFiles) {
                 if (fs.existsSync(file)) {
                     console.log(`📄 Executing ${file}...`);
-                    const sql = fs.readFileSync(file, 'utf8');
-                    await connection.execute(sql);
+                    await executeSqlFile(connection, file);
                     console.log(`✅ ${file} executed successfully`);
                 } else {
                     console.log(`⚠️  ${file} not found, skipping...`);
