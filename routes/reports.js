@@ -338,17 +338,63 @@ router.get('/library-statistics', async (req, res) => {
             LIMIT 10
         `);
 
-        // Get top publishers
-        const [topPublishers] = await mysqlPool.execute(`
+        // Get popular books (most borrowed)
+        const [popularBooks] = await mysqlPool.execute(`
             SELECT 
-                publisher,
-                COUNT(*) as book_count,
-                SUM(total_copies) as total_copies,
-                AVG(average_rating) as avg_rating
-            FROM books 
-            WHERE publisher IS NOT NULL AND publisher != '' AND is_retired = FALSE
-            GROUP BY publisher
-            ORDER BY book_count DESC
+                b.book_id,
+                b.title,
+                b.isbn,
+                b.total_copies,
+                b.available_copies,
+                b.average_rating,
+                GROUP_CONCAT(DISTINCT CONCAT(a.first_name, ' ', a.last_name) SEPARATOR ', ') as authors,
+                COUNT(c.checkout_id) as borrow_count
+            FROM books b
+            LEFT JOIN book_authors ba ON b.book_id = ba.book_id
+            LEFT JOIN authors a ON ba.author_id = a.author_id
+            LEFT JOIN checkouts c ON b.book_id = c.book_id
+            WHERE b.is_retired = FALSE
+            GROUP BY b.book_id, b.title, b.isbn, b.total_copies, b.available_copies, b.average_rating
+            ORDER BY borrow_count DESC
+            LIMIT 10
+        `);
+
+        // Get active readers (top users by checkouts)
+        const [activeReaders] = await mysqlPool.execute(`
+            SELECT 
+                u.user_id,
+                u.first_name,
+                u.last_name,
+                u.email,
+                u.is_active,
+                COUNT(c.checkout_id) as books_borrowed,
+                COALESCE(SUM(DATEDIFF(COALESCE(c.return_date, NOW()), c.checkout_date)), 0) as total_reading_time,
+                COALESCE(AVG(r.rating), 0) as average_rating
+            FROM users u
+            LEFT JOIN checkouts c ON u.user_id = c.user_id
+            LEFT JOIN reviews r ON u.user_id = r.user_id
+            WHERE u.user_type = 'member'
+            GROUP BY u.user_id, u.first_name, u.last_name, u.email, u.is_active
+            ORDER BY books_borrowed DESC
+            LIMIT 10
+        `);
+
+        // Get low availability books
+        const [lowAvailabilityBooks] = await mysqlPool.execute(`
+            SELECT 
+                b.book_id,
+                b.title,
+                b.isbn,
+                b.total_copies,
+                b.available_copies,
+                b.average_rating,
+                GROUP_CONCAT(DISTINCT CONCAT(a.first_name, ' ', a.last_name) SEPARATOR ', ') as authors
+            FROM books b
+            LEFT JOIN book_authors ba ON b.book_id = ba.book_id
+            LEFT JOIN authors a ON ba.author_id = a.author_id
+            WHERE b.is_retired = FALSE AND b.available_copies <= 2
+            GROUP BY b.book_id, b.title, b.isbn, b.total_copies, b.available_copies, b.average_rating
+            ORDER BY b.available_copies ASC
             LIMIT 10
         `);
 
@@ -359,7 +405,9 @@ router.get('/library-statistics', async (req, res) => {
                 basicStatistics: basicStats[0],
                 monthlyTrends,
                 topGenres,
-                topPublishers
+                popularBooks,
+                activeReaders,
+                lowAvailabilityBooks
             }
         });
 

@@ -15,9 +15,9 @@ app.use(cors());
 // Rate limiting
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100 // limit each IP to 100 requests per windowMs
+    max: 1000 // limit each IP to 1000 requests per windowMs
 });
-app.use(limiter);
+app.use('/api/', limiter); // Only apply to API routes
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
@@ -28,6 +28,7 @@ app.use(express.static('public'));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/users', require('./routes/users'));
 app.use('/api/books', require('./routes/books'));
 app.use('/api/checkouts', require('./routes/checkouts'));
 app.use('/api/reviews', require('./routes/reviews'));

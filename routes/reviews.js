@@ -60,6 +60,19 @@ router.post('/submit', authenticateToken, requireReader, [
         const { bookId, rating, comment } = req.body;
         const userId = req.user.user_id;
 
+        // Verify user has borrowed the book
+        const [checkouts] = await mysqlPool.execute(
+            'SELECT checkout_id FROM checkouts WHERE user_id = ? AND book_id = ?',
+            [userId, bookId]
+        );
+
+        if (checkouts.length === 0) {
+            return res.status(403).json({
+                success: false,
+                message: 'You must borrow this book before reviewing'
+            });
+        }
+
         // Use stored procedure to submit review
         const [result] = await mysqlPool.execute(
             'CALL ReviewBook(?, ?, ?, ?, @success, @message)',
@@ -223,12 +236,24 @@ router.get('/my-reviews', authenticateToken, requireReader, [
     query('limit').optional().isInt({ min: 1, max: 50 })
 ], async (req, res) => {
     try {
-        const { page = 1, limit = 20 } = req.query;
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Validation failed',
+                errors: errors.array()
+            });
+        }
+
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
         const userId = req.user.user_id;
         const offset = (page - 1) * limit;
 
-        // Get user's reviews
-        const [reviews] = await mysqlPool.execute(`
+        console.log('My reviews query params:', { page, limit, offset, userId, userIdType: typeof userId });
+
+        // Get user's reviews - using query instead of execute to avoid prepared statement issues
+        const [reviews] = await mysqlPool.query(`
             SELECT 
                 r.review_id,
                 r.rating,
@@ -238,45 +263,47 @@ router.get('/my-reviews', authenticateToken, requireReader, [
                 b.book_id,
                 b.title,
                 b.isbn,
-                b.cover_image_url,
-                GROUP_CONCAT(
-                    CONCAT(a.first_name, ' ', a.last_name) 
-                    SEPARATOR ', '
-                ) as authors
+                b.cover_image_url
             FROM reviews r
             JOIN books b ON r.book_id = b.book_id
-            LEFT JOIN book_authors ba ON b.book_id = ba.book_id
-            LEFT JOIN authors a ON ba.author_id = a.author_id
             WHERE r.user_id = ?
-            GROUP BY r.review_id
             ORDER BY r.review_date DESC
             LIMIT ? OFFSET ?
-        `, [userId, parseInt(limit), parseInt(offset)]);
+        `, [parseInt(userId), parseInt(limit), parseInt(offset)]);
 
         // Get total count
-        const [countResult] = await mysqlPool.execute(`
+        const [countResult] = await mysqlPool.query(`
             SELECT COUNT(*) as total
             FROM reviews 
             WHERE user_id = ?
-        `, [userId]);
+        `, [parseInt(userId)]);
 
         const totalReviews = countResult[0].total;
+
+        console.log('Query results:', { reviewsCount: reviews.length, totalReviews });
 
         res.json({
             success: true,
             data: {
-                reviews,
+                reviews: reviews || [],
                 pagination: {
-                    currentPage: parseInt(page),
+                    currentPage: page,
                     totalPages: Math.ceil(totalReviews / limit),
                     totalReviews,
-                    limit: parseInt(limit)
+                    limit: limit
                 }
             }
         });
 
     } catch (error) {
         console.error('Get user reviews error:', error);
+        console.error('Error details:', {
+            message: error.message,
+            code: error.code,
+            errno: error.errno,
+            sqlState: error.sqlState,
+            sqlMessage: error.sqlMessage
+        });
         res.status(500).json({
             success: false,
             message: 'Failed to fetch user reviews',

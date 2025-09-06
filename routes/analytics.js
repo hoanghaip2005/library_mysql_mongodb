@@ -17,7 +17,112 @@ const handleMongoError = (error, res, operation) => {
     });
 };
 
-// Apply staff authentication to all analytics routes
+// Apply staff authentication to all analytics routes except public ones
+// router.use(authenticateToken);
+// router.use(requireStaff);
+
+// Public analytics routes (no authentication required)
+router.get('/public/reading-time', async (req, res) => {
+    try {
+        const db = getMongoDB();
+        const collection = db.collection('reading_sessions');
+        
+        const pipeline = [
+            {
+                $group: {
+                    _id: '$bookId',
+                    totalHours: { $sum: '$durationMinutes' },
+                    bookTitle: { $first: '$bookTitle' }
+                }
+            },
+            { $sort: { totalHours: -1 } },
+            { $limit: 10 }
+        ];
+        
+        const result = await collection.aggregate(pipeline).toArray();
+        
+        res.json({
+            success: true,
+            data: result.map(item => ({
+                bookTitle: item.bookTitle || 'Unknown Book',
+                totalHours: Math.round(item.totalHours / 60 * 100) / 100
+            }))
+        });
+    } catch (error) {
+        handleMongoError(error, res, 'get reading time data');
+    }
+});
+
+router.get('/public/highlights', async (req, res) => {
+    try {
+        const db = getMongoDB();
+        const collection = db.collection('reading_sessions');
+        
+        const pipeline = [
+            {
+                $group: {
+                    _id: '$bookId',
+                    highlightCount: { $sum: { $size: { $ifNull: ['$highlights', []] } } },
+                    bookTitle: { $first: '$bookTitle' }
+                }
+            },
+            { $sort: { highlightCount: -1 } },
+            { $limit: 10 }
+        ];
+        
+        const result = await collection.aggregate(pipeline).toArray();
+        
+        res.json({
+            success: true,
+            data: result.map(item => ({
+                bookTitle: item.bookTitle || 'Unknown Book',
+                highlightCount: item.highlightCount
+            }))
+        });
+    } catch (error) {
+        handleMongoError(error, res, 'get highlights data');
+    }
+});
+
+router.get('/public/progress', async (req, res) => {
+    try {
+        const db = getMongoDB();
+        const collection = db.collection('reading_sessions');
+        
+        const pipeline = [
+            {
+                $group: {
+                    _id: '$bookId',
+                    title: { $first: '$bookTitle' },
+                    averageProgress: { $avg: '$readingProgress' },
+                    completionRate: { $avg: { $cond: [{ $eq: ['$readingProgress', 100] }, 1, 0] } },
+                    totalReaders: { $addToSet: '$userId' }
+                }
+            },
+            {
+                $project: {
+                    title: 1,
+                    averageProgress: { $round: ['$averageProgress', 1] },
+                    completionRate: { $round: ['$completionRate', 3] },
+                    totalReaders: { $size: '$totalReaders' }
+                }
+            },
+            { $sort: { averageProgress: -1 } },
+            { $limit: 10 }
+        ];
+        
+        const result = await collection.aggregate(pipeline).toArray();
+        
+        res.json({
+            success: true,
+            data: result
+        });
+    } catch (error) {
+        handleMongoError(error, res, 'get progress data');
+    }
+});
+
+// Apply staff authentication to remaining analytics routes
 router.use(authenticateToken);
 router.use(requireStaff);
 

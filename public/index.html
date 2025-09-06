@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Library Platform</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="checkout-styles.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
@@ -85,7 +86,7 @@
                 <h2>Search Books</h2>
                 <div class="search-form">
                     <div class="search-input-group">
-                        <input type="text" id="search-query" placeholder="Search by title, author, or description...">
+                        <input type="text" id="search-query" placeholder="Search by title, author, genre, or publisher...">
                         <button class="btn btn-primary" id="search-btn">
                             <i class="fas fa-search"></i>
                         </button>
@@ -155,6 +156,7 @@
                 <div class="admin-tabs">
                     <button class="tab-btn active" data-tab="books">Manage Books</button>
                     <button class="tab-btn" data-tab="authors">Manage Authors</button>
+                    <button class="tab-btn" data-tab="users">Manage Users</button>
                     <button class="tab-btn" data-tab="reports">Reports</button>
                     <button class="tab-btn" data-tab="analytics">Analytics</button>
                 </div>
@@ -175,6 +177,72 @@
                         </div>
                         <div class="admin-content" id="authors-content">
                             <!-- Authors management will be loaded here -->
+                        </div>
+                    </div>
+                    <div class="tab-panel" id="users-panel">
+                        <div class="admin-actions">
+                            <div class="filters-container">
+                                <div class="search-box">
+                                    <input type="text" id="user-search-filter" class="form-control" placeholder="Search users...">
+                                </div>
+                                <div class="filter-group">
+                                    <select id="user-type-filter" class="form-control">
+                                        <option value="">All Types</option>
+                                        <option value="reader">Reader</option>
+                                        <option value="staff">Staff</option>
+                                    </select>
+                                </div>
+                                <div class="filter-group">
+                                    <select id="user-status-filter" class="form-control">
+                                        <option value="all">All Status</option>
+                                        <option value="active">Active</option>
+                                        <option value="inactive">Inactive</option>
+                                    </select>
+                                </div>
+                                <button class="btn btn-primary" onclick="adminPanel.applyUserFilters()">
+                                    <i class="fas fa-filter"></i> Apply Filters
+                                </button>
+                                <button class="btn btn-secondary" onclick="adminPanel.loadUsers()">
+                                    <i class="fas fa-sync"></i> Refresh
+                                </button>
+                            </div>
+                        </div>
+                        <div class="admin-content" id="users-content">
+                            <div class="user-stats">
+                                <div class="stat-card">
+                                    <h4>Total Users</h4>
+                                    <span id="total-users">0</span>
+                                </div>
+                                <div class="stat-card">
+                                    <h4>Active Users</h4>
+                                    <span id="active-users">0</span>
+                                </div>
+                                <div class="stat-card">
+                                    <h4>Staff Members</h4>
+                                    <span id="staff-users">0</span>
+                                </div>
+                            </div>
+                            <div class="users-table-container">
+                                <table class="users-table table">
+                                    <thead>
+                                        <tr>
+                                            <th>Username</th>
+                                            <th>Email</th>
+                                            <th>Name</th>
+                                            <th>Account Type</th>
+                                            <th>Status</th>
+                                            <th>Join Date</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="users-table-body">
+                                        <!-- Users will be loaded here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="pagination" class="pagination">
+                                <!-- Pagination will be loaded here -->
+                            </div>
                         </div>
                     </div>
                     <div class="tab-panel" id="reports-panel">
@@ -436,6 +504,7 @@ m                    <label for="book-authors">Author *</label>
         </div>
     </div>
 
+
     <!-- Review Book Modal -->
     <div class="modal" id="review-book-modal">
         <div class="modal-content">
@@ -475,9 +544,25 @@ m                    <label for="book-authors">Author *</label>
         <div class="spinner"></div>
     </div>
 
+    <!-- User Details Modal -->
+    <div class="modal" id="user-details-modal">
+        <div class="user-details-modal-content">
+            <div id="user-details-content">
+                <!-- User details will be loaded here -->
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Notifications -->
     <div class="toast-container" id="toast-container"></div>
+    <div id="alert-container"></div>
 
+    <!-- Core library scripts -->
     <script src="app.js"></script>
+    <script src="checkouts.js"></script>
+    <script src="admin.js"></script>
+
+    <!-- Bootstrap Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

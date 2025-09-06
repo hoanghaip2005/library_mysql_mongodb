@@ -5,11 +5,210 @@ const { authenticateToken, requireStaff } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Apply staff authentication to all admin routes
-router.use(authenticateToken);
-router.use(requireStaff);
+// Get all users with pagination and search
+router.get('/users', authenticateToken, requireStaff, [
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
+    query('search').optional().trim().escape(),
+    query('userType').optional().trim().isIn(['reader', 'staff']),
+    query('status').optional().trim().isIn(['active', 'inactive', 'all'])
+], async (req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Invalid query parameters',
+                errors: errors.array() 
+            });
+        }
 
-// Debug endpoint to list all authors
+        const pageNum = Math.max(1, parseInt(req.query.page) || 1);
+        const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit) || 10));
+        const offsetNum = (pageNum - 1) * limitNum;
+        const { search, userType, status } = req.query;
+
+        let conditions = [];
+        let params = [];
+        let query = `
+            SELECT 
+                user_id,
+                username,
+                email,
+                first_name,
+                last_name,
+                user_type,
+                date_joined,
+                is_active
+            FROM users
+        `;
+
+        // Add conditions with strict validation
+        if (search && search.trim()) {
+            conditions.push('(username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ?)');
+            const searchTerm = `%${search.trim()}%`;
+            params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+        }
+
+        if (userType && ['reader', 'staff'].includes(userType)) {
+            conditions.push('user_type = ?');
+            params.push(userType);
+        }
+
+        if (status && ['active', 'inactive'].includes(status)) {
+            conditions.push('is_active = ?');
+            params.push(status === 'active' ? '1' : '0');  // Convert to string for MySQL
+        }
+
+        // Add WHERE clause if conditions exist
+        if (conditions.length > 0) {
+            query += ' WHERE ' + conditions.join(' AND ');
+        }
+
+        // Add ORDER BY and LIMIT clauses
+        query += ' ORDER BY date_joined DESC LIMIT ? OFFSET ?';
+        
+        // Convert numbers to strings for MySQL params
+        params.push(String(limitNum));  // Convert to string
+        params.push(String(offsetNum)); // Convert to string
+
+        // Get users with proper error handling
+        let users;
+        try {
+            [users] = await mysqlPool.execute(query, params);
+        } catch (error) {
+            console.error('Failed to get users:', error);
+            throw new Error('Failed to get users: ' + error.message);
+        }
+
+        // Get total count with proper error handling
+        let countQuery = 'SELECT COUNT(*) as total FROM users';
+        if (conditions.length > 0) {
+            countQuery += ' WHERE ' + conditions.join(' AND ');
+        }
+
+        let countResult;
+        try {
+            [countResult] = await mysqlPool.execute(countQuery, params.slice(0, -2));
+        } catch (error) {
+            console.error('Failed to get total count:', error);
+            throw new Error('Failed to get total count: ' + error.message);
+        }
+
+        const totalUsers = countResult[0].total;
+
+        // Get user statistics
+        const [statsResult] = await mysqlPool.execute(`
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
+                SUM(CASE WHEN user_type = 'staff' THEN 1 ELSE 0 END) as staff
+            FROM users
+        `);
+
+        const stats = statsResult[0];
+
+        res.json({
+            success: true,
+            data: {
+                users,
+                stats: {
+                    total: stats.total,
+                    active: stats.active,
+                    staff: stats.staff
+                },
+                pagination: {
+                    currentPage: pageNum,
+                    totalPages: Math.ceil(totalUsers / limitNum),
+                    totalUsers,
+                    limit: limitNum
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('Get users error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch users',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+    }
+});
+
+// Get user details including checkout history
+router.get('/users/:userId', authenticateToken, requireStaff, [
+    query('page').optional().isInt({ min: 1 }),
+    query('limit').optional().isInt({ min: 1, max: 100 })
+], async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId);
+        const pageNum = Math.max(1, Number(req.query.page) || 1);
+        const limitNum = Math.max(1, Math.min(100, Number(req.query.limit) || 50));
+        const offsetNum = (pageNum - 1) * limitNum;
+
+        if (isNaN(userId) || userId <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid user ID'
+            });
+        }
+
+        console.log('User details request:', { userId, pageNum, limitNum, offsetNum });
+
+        // Get user details
+        const [users] = await mysqlPool.execute(
+            `SELECT user_id, username, email, first_name, last_name, user_type, 
+            phone, address, date_joined, is_active FROM users WHERE user_id = ?`,
+            [userId]
+        );
+
+        if (users.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        // Get user's checkout history
+        const [checkouts] = await mysqlPool.execute(
+            `SELECT c.*, b.title as book_title, b.isbn 
+            FROM checkouts c 
+            JOIN books b ON c.book_id = b.book_id 
+            WHERE c.user_id = ? 
+            ORDER BY c.checkout_date DESC 
+            LIMIT ? OFFSET ?`,
+            [String(userId), String(limitNum), String(offsetNum)]
+        );
+
+        // Get total checkouts count
+        const [{ total }] = await mysqlPool.execute(
+            'SELECT COUNT(*) as total FROM checkouts WHERE user_id = ?',
+            [String(userId)]
+        );
+
+        res.json({
+            success: true,
+            data: {
+                user: users[0],
+                checkouts,
+                pagination: {
+                    page: pageNum,
+                    limit: limitNum,
+                    total
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Get user details error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to get user details'
+        });
+    }
+});
+
+// Debug endpoint to list all authors (no auth required)
 router.get('/debug/authors', async (req, res) => {
     try {
         const [authors] = await mysqlPool.execute('SELECT * FROM authors');
@@ -26,6 +225,10 @@ router.get('/debug/authors', async (req, res) => {
     }
 });
 
+// Apply staff authentication to all admin routes
+router.use(authenticateToken);
+router.use(requireStaff);
+
 // Get all books
 router.get('/books', [
     query('page').optional().isInt({ min: 1 }),
@@ -33,8 +236,8 @@ router.get('/books', [
     query('search').optional().isLength({ min: 1, max: 100 }).trim()
 ], async (req, res) => {
     try {
-        const pageNum = Number(req.query.page) || 1;
-        const limitNum = Number(req.query.limit) || 50;
+        const pageNum = Math.max(1, parseInt(req.query.page) || 1);
+        const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
         const offsetNum = (pageNum - 1) * limitNum;
         const search = req.query.search;
 
@@ -42,7 +245,7 @@ router.get('/books', [
         let queryParams = [];
 
         if (search) {
-            whereClause += ' AND (b.title LIKE ? OR b.isbn LIKE ? OR b.publisher LIKE ?)';
+            whereClause += ' AND (b.title COLLATE utf8mb4_general_ci LIKE ? OR b.isbn LIKE ? OR b.publisher COLLATE utf8mb4_general_ci LIKE ?)';
             const searchTerm = `%${search}%`;
             queryParams.push(searchTerm, searchTerm, searchTerm);
         }
@@ -388,8 +591,8 @@ router.get('/authors', [
     query('search').optional().isLength({ min: 1, max: 100 }).trim()
 ], async (req, res) => {
     try {
-        const pageNum = Number(req.query.page) || 1;
-        const limitNum = Number(req.query.limit) || 50;
+        const pageNum = Math.max(1, parseInt(req.query.page) || 1);
+        const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
         const offsetNum = (pageNum - 1) * limitNum;
         const search = req.query.search;
 
@@ -402,7 +605,9 @@ router.get('/authors', [
             queryParams.push(searchTerm, searchTerm, searchTerm);
         }
 
-        queryParams.push(limitNum, offsetNum);
+        queryParams.push(String(limitNum), String(offsetNum));
+
+        console.log('Authors query params:', { pageNum, limitNum, offsetNum, search, queryParams });
 
         const [authors] = await mysqlPool.execute(`
             SELECT 
@@ -413,8 +618,8 @@ router.get('/authors', [
             ${whereClause}
             GROUP BY a.author_id
             ORDER BY a.last_name, a.first_name
-            LIMIT ? OFFSET ?
-        `, queryParams);
+            LIMIT ${limitNum} OFFSET ${offsetNum}
+        `, queryParams.slice(0, -2));
 
         // Get total count
         const [countResult] = await mysqlPool.execute(`
@@ -431,10 +636,10 @@ router.get('/authors', [
             data: {
                 authors,
                 pagination: {
-                    currentPage: parseInt(page),
-                    totalPages: Math.ceil(totalAuthors / limit),
+                    currentPage: pageNum,
+                    totalPages: Math.ceil(totalAuthors / limitNum),
                     totalAuthors,
-                    limit: parseInt(limit)
+                    limit: limitNum
                 }
             }
         });
@@ -526,82 +731,6 @@ router.get('/logs', [
     }
 });
 
-// Get all users (for admin management)
-router.get('/users', [
-    query('page').optional().isInt({ min: 1 }),
-    query('limit').optional().isInt({ min: 1, max: 100 }),
-    query('userType').optional().isIn(['reader', 'staff']),
-    query('search').optional().isLength({ min: 1, max: 100 }).trim()
-], async (req, res) => {
-    try {
-        const { page = 1, limit = 50, userType, search } = req.query;
-        const offset = (page - 1) * limit;
-
-        let whereConditions = [];
-        let queryParams = [];
-
-        if (userType) {
-            whereConditions.push('user_type = ?');
-            queryParams.push(userType);
-        }
-
-        if (search) {
-            whereConditions.push('(username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ?)');
-            const searchTerm = `%${search}%`;
-            queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
-        }
-
-        const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
-
-        const [users] = await mysqlPool.execute(`
-            SELECT 
-                user_id,
-                username,
-                email,
-                first_name,
-                last_name,
-                user_type,
-                phone,
-                date_joined,
-                is_active,
-                created_at
-            FROM users
-            ${whereClause}
-            ORDER BY date_joined DESC
-            LIMIT ? OFFSET ?
-        `, [...queryParams, parseInt(limit), parseInt(offset)]);
-
-        // Get total count
-        const [countResult] = await mysqlPool.execute(`
-            SELECT COUNT(*) as total
-            FROM users
-            ${whereClause}
-        `, queryParams);
-
-        const totalUsers = countResult[0].total;
-
-        res.json({
-            success: true,
-            data: {
-                users,
-                pagination: {
-                    currentPage: parseInt(page),
-                    totalPages: Math.ceil(totalUsers / limit),
-                    totalUsers,
-                    limit: parseInt(limit)
-                }
-            }
-        });
-
-    } catch (error) {
-        console.error('Get users error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to fetch users',
-            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-        });
-    }
-});
 
 // Delete an author
 router.delete('/authors/:authorId', async (req, res) => {
@@ -683,6 +812,218 @@ router.delete('/authors/:authorId', async (req, res) => {
             success: false,
             message: 'Failed to delete author',
             error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+    }
+});
+
+// Get single author
+router.get('/authors/:authorId', async (req, res) => {
+    try {
+        const authorId = parseInt(req.params.authorId);
+
+        if (isNaN(authorId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid author ID'
+            });
+        }
+
+        const [authors] = await mysqlPool.execute(
+            'SELECT * FROM authors WHERE author_id = ?',
+            [authorId]
+        );
+
+        if (!authors.length) {
+            return res.status(404).json({
+                success: false,
+                message: 'Author not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: authors[0]
+        });
+
+    } catch (error) {
+        console.error('Get author error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to get author',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+    }
+});
+
+// Update author information
+router.put('/authors/:authorId', [
+    body('first_name').notEmpty().withMessage('First name is required'),
+    body('last_name').notEmpty().withMessage('Last name is required'),
+    body('nationality').optional().isLength({ max: 100 }),
+    body('biography').optional().isLength({ max: 1000 })
+], async (req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Validation failed',
+                errors: errors.array()
+            });
+        }
+
+        const authorId = parseInt(req.params.authorId);
+        const staffId = req.user.user_id;
+
+        if (isNaN(authorId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid author ID'
+            });
+        }
+
+        const { first_name, last_name, birth_date, nationality, biography } = req.body;
+
+        // Check if author exists
+        const [existingAuthor] = await mysqlPool.execute(
+            'SELECT first_name, last_name FROM authors WHERE author_id = ?',
+            [authorId]
+        );
+
+        if (!existingAuthor.length) {
+            return res.status(404).json({
+                success: false,
+                message: 'Author not found'
+            });
+        }
+
+        // Update author
+        await mysqlPool.execute(
+            `UPDATE authors 
+             SET first_name = ?, last_name = ?, birth_date = ?, nationality = ?, biography = ?
+             WHERE author_id = ?`,
+            [first_name, last_name, birth_date, nationality, biography, authorId]
+        );
+
+        // Log the action
+        await mysqlPool.execute(
+            'INSERT INTO staff_logs (staff_id, action_type, target_table, target_id, old_values, new_values) VALUES (?, ?, ?, ?, ?, ?)',
+            [
+                staffId,
+                'update_author',
+                'authors',
+                authorId,
+                JSON.stringify({
+                    name: `${existingAuthor[0].first_name} ${existingAuthor[0].last_name}`
+                }),
+                JSON.stringify({
+                    name: `${first_name} ${last_name}`,
+                    birth_date,
+                    nationality,
+                    biography
+                })
+            ]
+        );
+
+        res.json({
+            success: true,
+            message: 'Author updated successfully'
+        });
+
+    } catch (error) {
+        console.error('Update author error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to update author',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+    }
+});
+
+// Update user information
+router.put('/users/:userId', [
+    body('first_name').notEmpty().withMessage('First name is required'),
+    body('last_name').notEmpty().withMessage('Last name is required'),
+    body('email').isEmail().withMessage('Valid email is required'),
+    body('username').notEmpty().withMessage('Username is required'),
+    body('user_type').isIn(['member', 'staff']).withMessage('User type must be member or staff'),
+    body('is_active').isBoolean().withMessage('Active status must be boolean'),
+    body('phone').optional().isString(),
+    body('address').optional().isString()
+], async (req, res) => {
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Validation failed',
+                errors: errors.array()
+            });
+        }
+
+        const userId = parseInt(req.params.userId);
+        const { first_name, last_name, email, username, user_type, is_active, phone, address } = req.body;
+        const staffId = req.user.user_id;
+
+        // Check if user exists
+        const [users] = await mysqlPool.execute(
+            'SELECT * FROM users WHERE user_id = ?',
+            [String(userId)]
+        );
+
+        if (users.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        // Check if email or username already exists (excluding current user)
+        const [existingUsers] = await mysqlPool.execute(
+            'SELECT user_id FROM users WHERE (email = ? OR username = ?) AND user_id != ?',
+            [email, username, String(userId)]
+        );
+
+        if (existingUsers.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email or username already exists'
+            });
+        }
+
+        // Update user
+        await mysqlPool.execute(
+            `UPDATE users SET 
+                first_name = ?, 
+                last_name = ?, 
+                email = ?, 
+                username = ?, 
+                user_type = ?, 
+                is_active = ?, 
+                phone = ?, 
+                address = ?,
+                updated_at = NOW()
+            WHERE user_id = ?`,
+            [first_name, last_name, email, username, user_type, is_active, phone || null, address || null, String(userId)]
+        );
+
+        // Log the action
+        await mysqlPool.execute(
+            'INSERT INTO admin_actions (admin_id, action_type, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)',
+            [String(staffId), 'update_user', 'user', String(userId), JSON.stringify({
+                updated_fields: { first_name, last_name, email, username, user_type, is_active, phone, address }
+            })]
+        );
+
+        res.json({
+            success: true,
+            message: 'User updated successfully'
+        });
+    } catch (error) {
+        console.error('Update user error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to update user'
         });
     }
 });

@@ -196,6 +196,54 @@ BEGIN
     END IF;
 END$$
 
+-- RenewBook: extend due date for a checkout
+DROP PROCEDURE IF EXISTS RenewBook$$
+CREATE PROCEDURE RenewBook(
+    IN p_checkout_id INT,
+    IN p_additional_days INT,
+    OUT p_success BOOLEAN,
+    OUT p_message VARCHAR(255)
+)
+BEGIN
+    DECLARE v_user_id INT;
+    DECLARE v_due_date DATETIME;
+    DECLARE v_status VARCHAR(20);
+    DECLARE v_renewal_count INT DEFAULT 0;
+    
+    SET p_success = FALSE;
+    SET p_message = 'Checkout not found';
+    
+    -- Get checkout details
+    SELECT user_id, due_date, status, renewal_count 
+    INTO v_user_id, v_due_date, v_status, v_renewal_count
+    FROM checkouts 
+    WHERE checkout_id = p_checkout_id FOR UPDATE;
+    
+    IF v_user_id IS NOT NULL THEN
+        -- Check if checkout is active
+        IF v_status = 'active' THEN
+            -- Check renewal limit (max 2 renewals)
+            IF v_renewal_count < 2 THEN
+                -- Update due date and renewal count
+                UPDATE checkouts 
+                SET due_date = DATE_ADD(due_date, INTERVAL p_additional_days DAY),
+                    renewal_count = renewal_count + 1,
+                    last_renewal_date = NOW()
+                WHERE checkout_id = p_checkout_id;
+                
+                SET p_success = TRUE;
+                SET p_message = 'Book renewed successfully';
+            ELSE
+                SET p_success = FALSE;
+                SET p_message = 'Maximum renewals reached (2 renewals allowed)';
+            END IF;
+        ELSE
+            SET p_success = FALSE;
+            SET p_message = 'Cannot renew returned or overdue book';
+        END IF;
+    END IF;
+END$$
+
 DELIMITER ;
 
 

@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS checkouts (
     is_late TINYINT(1) NOT NULL DEFAULT 0,
     late_fee DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     status ENUM('active','returned','overdue') NOT NULL DEFAULT 'active',
+    renewal_count INT NOT NULL DEFAULT 0,
+    last_renewal_date DATETIME NULL,
     CONSTRAINT fk_checkouts_user FOREIGN KEY (user_id) REFERENCES users(user_id),
     CONSTRAINT fk_checkouts_book FOREIGN KEY (book_id) REFERENCES books(book_id),
     INDEX idx_checkouts_user (user_id),

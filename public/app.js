@@ -9,6 +9,8 @@ class SmartLibraryApp {
     constructor() {
         this.currentUser = null;
         this.currentSection = 'home';
+        this.currentUserPage = 1;
+        this.borrowedBookIds = new Set(); // Track borrowed book IDs
         this.init();
 
         // Set the app instance to the global scope
@@ -143,6 +145,13 @@ class SmartLibraryApp {
         document.getElementById('edit-author-form')?.addEventListener('submit', (e) => this.handleEditAuthor(e));
         document.getElementById('review-book-form')?.addEventListener('submit', (e) => this.handleReviewBook(e));
 
+        // User management event listeners
+        document.getElementById('refresh-users-btn')?.addEventListener('click', () => this.loadUsers());
+        document.getElementById('apply-user-filters')?.addEventListener('click', () => this.applyUserFilters());
+        document.getElementById('user-search-filter')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.applyUserFilters();
+        });
+
         // Admin panel dynamic button handlers
         document.addEventListener('click', (e) => {
             const target = e.target;
@@ -189,6 +198,72 @@ class SmartLibraryApp {
                     this.retireBook(parseInt(bookId));
                 }
             }
+
+            // View User Details button (only for users panel, not admin panel)
+            if (target.matches('.view-user-btn') && !target.closest('#admin-panel')) {
+                const userId = target.dataset.userId;
+                if (userId) {
+                    this.viewUserDetails(parseInt(userId));
+                }
+            }
+
+            // User pagination buttons
+            if (target.matches('.user-page-btn')) {
+                const page = parseInt(target.dataset.page);
+                this.goToUserPage(page);
+            }
+
+            if (target.matches('#prev-user-page')) {
+                this.goToUserPage(this.currentUserPage - 1);
+            }
+
+            if (target.matches('#next-user-page')) {
+                this.goToUserPage(this.currentUserPage + 1);
+            }
+             
+             // Borrow Book button
+             if (target.matches('.borrow-btn')) {
+                 e.preventDefault();
+                 e.stopPropagation();
+                 const bookId = target.dataset.bookId;
+                 if (bookId) {
+                     console.log('Borrow button clicked for book ID:', bookId);
+                     this.borrowBook(parseInt(bookId));
+                 }
+             }
+
+             // Return Book button
+             if (target.matches('.return-book-btn')) {
+                 e.preventDefault();
+                 e.stopPropagation();
+                 const checkoutId = target.dataset.checkoutId;
+                 if (checkoutId) {
+                     console.log('Return button clicked for checkout ID:', checkoutId);
+                     this.returnBook(parseInt(checkoutId));
+                 }
+             }
+
+             // Renew Book button
+             if (target.matches('.renew-book-btn')) {
+                 e.preventDefault();
+                 e.stopPropagation();
+                 const checkoutId = target.dataset.checkoutId;
+                 if (checkoutId) {
+                     console.log('Renew button clicked for checkout ID:', checkoutId);
+                     this.renewBook(parseInt(checkoutId));
+                 }
+             }
+
+             // Write Review button
+             if (target.matches('.write-review-btn')) {
+                 e.preventDefault();
+                 e.stopPropagation();
+                 const bookId = target.dataset.bookId;
+                 if (bookId) {
+                     console.log('Write Review button clicked for book ID:', bookId);
+                     this.showReviewForm(parseInt(bookId));
+                 }
+             }
         });
 
         // Modal close buttons
@@ -206,13 +281,21 @@ class SmartLibraryApp {
 
     async loadInitialData() {
         try {
-            await Promise.all([
+            const promises = [
                 this.loadLibraryStats(),
                 this.loadFeaturedBooks(),
                 this.loadRecentReviews(),
                 this.loadGenres(),
-                this.loadPublishers()
-            ]);
+                this.loadPublishers(),
+                this.loadUserStats()
+            ];
+            
+            // Load borrowed book IDs if user is logged in as reader
+            if (this.currentUser?.userType === 'reader') {
+                promises.push(this.loadBorrowedBookIds());
+            }
+            
+            await Promise.all(promises);
         } catch (error) {
             console.error('Error loading initial data:', error);
         }
@@ -226,6 +309,10 @@ class SmartLibraryApp {
                 if (response.success) {
                     this.currentUser = response.data;
                     this.updateAuthUI();
+                    // Load borrowed book IDs if user is a reader
+                    if (this.currentUser.userType === 'reader') {
+                        await this.loadBorrowedBookIds();
+                    }
                 } else {
                     localStorage.removeItem('token');
                 }
@@ -285,6 +372,15 @@ class SmartLibraryApp {
             case 'my-books':
                 if (this.currentUser?.userType === 'reader') {
                     await this.loadCurrentCheckouts();
+                    // Also load my reviews for the reviews tab
+                    await this.loadMyReviews();
+                    // Load borrowed book IDs for UI state
+                    await this.loadBorrowedBookIds();
+                }
+                break;
+            case 'search':
+                if (this.currentUser?.userType === 'reader') {
+                    await this.loadBorrowedBookIds();
                 }
                 break;
             case 'admin':
@@ -333,6 +429,321 @@ class SmartLibraryApp {
         }
     }
 
+    async loadUserStats() {
+        try {
+            // Only load if user is staff and we're on admin page
+            if (this.currentUser && this.currentUser.userType === 'staff') {
+                const response = await this.apiCall('/api/users?limit=1', 'GET');
+                if (response.success) {
+                    const pagination = response.data.pagination;
+                    document.getElementById('total-users').textContent = pagination.totalUsers || 0;
+                    
+                    // Load active users count
+                    const activeResponse = await this.apiCall('/api/users?status=active&limit=1', 'GET');
+                    if (activeResponse.success) {
+                        document.getElementById('active-users').textContent = activeResponse.data.pagination.totalUsers || 0;
+                    }
+                    
+                    // Load staff users count
+                    const staffResponse = await this.apiCall('/api/users?userType=staff&limit=1', 'GET');
+                    if (staffResponse.success) {
+                        document.getElementById('staff-users').textContent = staffResponse.data.pagination.totalUsers || 0;
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error loading user stats:', error);
+        }
+    }
+
+    // User Management Methods
+    async loadUsers(page = 1) {
+        const tableBody = document.getElementById('users-table-body');
+        const content = document.getElementById('users-content');
+        if (!tableBody || !content) return;
+
+        try {
+            // Show loading state
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="text-center">
+                        <div class="loading">
+                            <i class="fas fa-spinner fa-spin"></i> Loading users...
+                        </div>
+                    </td>
+                </tr>
+            `;
+
+            // Prepare query parameters
+            const searchValue = document.getElementById('user-search-filter')?.value || '';
+            const userType = document.getElementById('user-type-filter')?.value || '';
+            const status = document.getElementById('user-status-filter')?.value || 'all';
+
+            // Build query parameters
+            const params = new URLSearchParams();
+            
+            // Only add valid parameters
+            if (page && !isNaN(page)) params.append('page', page);
+            params.append('limit', 10);
+            if (searchValue) params.append('search', searchValue);
+            if (userType && ['reader', 'staff'].includes(userType)) params.append('userType', userType);
+            if (status && ['active', 'inactive', 'all'].includes(status)) params.append('status', status);
+
+            // Make API call
+            const response = await this.apiCall(`/api/admin/users?${params}`, 'GET');
+
+            if (response.success && response.data) {
+                // Render users table
+                tableBody.innerHTML = response.data.users.map(user => `
+                    <tr>
+                        <td>${this.escapeHtml(user.username)}</td>
+                        <td>${this.escapeHtml(user.email)}</td>
+                        <td>${this.escapeHtml(user.first_name)} ${this.escapeHtml(user.last_name)}</td>
+                        <td>
+                            <span class="badge ${user.user_type === 'staff' ? 'bg-primary' : 'bg-secondary'}">
+                                ${this.escapeHtml(user.user_type)}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="badge ${user.is_active ? 'bg-success' : 'bg-danger'}">
+                                ${user.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                        </td>
+                        <td>${new Date(user.date_joined).toLocaleDateString()}</td>
+                        <td>
+                            <button class="btn btn-sm btn-info" onclick="viewUserDetails(${user.user_id})">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <button class="btn btn-sm ${user.is_active ? 'btn-danger' : 'btn-success'}" 
+                                    onclick="toggleUserStatus(${user.user_id}, ${!user.is_active})">
+                                <i class="fas fa-${user.is_active ? 'ban' : 'check'}"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+
+                // Update pagination
+                this.renderPagination(response.data.pagination);
+            } else {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="text-center text-danger">
+                            Failed to load users: ${response.message || 'Unknown error'}
+                        </td>
+                    </tr>
+                `;
+            }
+        } catch (error) {
+            console.error('Load users error:', error);
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="text-center text-danger">
+                        Failed to load users. Please try again.
+                    </td>
+                </tr>
+            `;
+        }
+    }
+
+    renderPagination(pagination) {
+        const container = document.getElementById('users-pagination');
+        if (!container) return;
+
+        const pages = [];
+        const currentPage = pagination.currentPage;
+        const totalPages = pagination.totalPages;
+
+        // Previous button
+        if (currentPage > 1) {
+            pages.push(`<button class="btn btn-sm btn-outline" onclick="loadUsers(${currentPage - 1})">Previous</button>`);
+        }
+
+        // Page numbers
+        for (let i = 1; i <= totalPages; i++) {
+            if (i === 1 || i === totalPages || (i >= currentPage - 2 && i <= currentPage + 2)) {
+                pages.push(`
+                    <button class="btn btn-sm ${i === currentPage ? 'btn-primary' : 'btn-outline'}" 
+                            onclick="loadUsers(${i})">${i}</button>
+                `);
+            } else if (i === currentPage - 3 || i === currentPage + 3) {
+                pages.push('<span class="pagination-ellipsis">...</span>');
+            }
+        }
+
+        // Next button
+        if (currentPage < totalPages) {
+            pages.push(`<button class="btn btn-sm btn-outline" onclick="loadUsers(${currentPage + 1})">Next</button>`);
+        }
+
+        container.innerHTML = pages.join('');
+    }
+
+    getUserFilters() {
+        return {
+            search: document.getElementById('user-search-filter')?.value || '',
+            userType: document.getElementById('user-type-filter')?.value || '',
+            status: document.getElementById('user-status-filter')?.value || 'all'
+        };
+    }
+
+    applyUserFilters() {
+        this.loadUsers(1);
+    }
+
+    goToUserPage(page) {
+        this.loadUsers();
+    }
+
+    renderUsersTable(users, pagination) {
+        const content = document.getElementById('users-content');
+        
+        if (users.length === 0) {
+            content.innerHTML = '<div class="error">No users found</div>';
+            return;
+        }
+
+        const table = `
+            <table class="users-table">
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Statistics</th>
+                        <th>Joined</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${users.map(user => this.renderUserRow(user)).join('')}
+                </tbody>
+            </table>
+            ${this.renderUserPagination(pagination)}
+        `;
+
+        content.innerHTML = table;
+    }
+
+    renderUserRow(user) {
+        const initials = `${user.first_name.charAt(0)}${user.last_name.charAt(0)}`.toUpperCase();
+        const joinedDate = new Date(user.date_joined).toLocaleDateString();
+        
+        return `
+            <tr>
+                <td>
+                    <div class="user-info">
+                        <div class="user-avatar">${initials}</div>
+                        <div class="user-details">
+                            <h4>${user.full_name}</h4>
+                            <p>${user.email}</p>
+                        </div>
+                    </div>
+                </td>
+                <td>
+                    <span class="user-type-badge type-${user.user_type}">${user.user_type}</span>
+                </td>
+                <td>
+                    <span class="status-badge status-${user.is_active ? 'active' : 'inactive'}">
+                        ${user.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                </td>
+                <td>
+                    <div class="user-stats">
+                        <div class="user-stat-item">
+                            <div class="user-stat-number">${user.total_checkouts}</div>
+                            <div class="user-stat-label">Checkouts</div>
+                        </div>
+                        <div class="user-stat-item">
+                            <div class="user-stat-number">${user.total_reviews}</div>
+                            <div class="user-stat-label">Reviews</div>
+                        </div>
+                        <div class="user-stat-item">
+                            <div class="user-stat-number">${user.average_rating_given}</div>
+                            <div class="user-stat-label">Avg Rating</div>
+                        </div>
+                    </div>
+                </td>
+                <td>${joinedDate}</td>
+                <td>
+                    <div class="user-actions">
+                        <button class="btn btn-primary btn-sm view-user-btn" data-user-id="${user.user_id}">
+                            <i class="fas fa-eye"></i> View
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    renderUserPagination(pagination) {
+        if (pagination.totalPages <= 1) return '';
+
+        let paginationHTML = '<div class="pagination">';
+        
+        // Previous button
+        paginationHTML += `
+            <button ${pagination.currentPage === 1 ? 'disabled' : ''} id="prev-user-page">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+        `;
+
+        // Page numbers
+        const startPage = Math.max(1, pagination.currentPage - 2);
+        const endPage = Math.min(pagination.totalPages, pagination.currentPage + 2);
+
+        if (startPage > 1) {
+            paginationHTML += `<button class="user-page-btn" data-page="1">1</button>`;
+            if (startPage > 2) {
+                paginationHTML += '<span>...</span>';
+            }
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            paginationHTML += `
+                <button class="user-page-btn ${i === pagination.currentPage ? 'active' : ''}" data-page="${i}">
+                    ${i}
+                </button>
+            `;
+        }
+
+        if (endPage < pagination.totalPages) {
+            if (endPage < pagination.totalPages - 1) {
+                paginationHTML += '<span>...</span>';
+            }
+            paginationHTML += `<button class="user-page-btn" data-page="${pagination.totalPages}">${pagination.totalPages}</button>`;
+        }
+
+        // Next button
+        paginationHTML += `
+            <button ${pagination.currentPage === pagination.totalPages ? 'disabled' : ''} id="next-user-page">
+                <i class="fas fa-chevron-right"></i>
+            </button>
+        `;
+
+        paginationHTML += '</div>';
+        return paginationHTML;
+    }
+
+    async viewUserDetails(userId) {
+        try {
+            const response = await this.apiCall(`/api/admin/users/${userId}`, 'GET');
+            if (response.success) {
+                this.showUserDetailsModal(response.data);
+            } else {
+                this.showToast('Failed to load user details: ' + response.message, 'error');
+            }
+        } catch (error) {
+            console.error('Load user details error:', error);
+            this.showToast('Failed to load user details. Please try again.', 'error');
+        }
+    }
+
+    showUserDetailsModal(data) {
+        // Use the admin panel's modal instead of creating a new one
+        // This function is kept for compatibility but delegates to admin panel
+        console.log('showUserDetailsModal called, but using admin panel modal instead');
+    }
+
     async loadFeaturedBooks() {
         try {
             const response = await this.apiCall('/api/books/popular/list?limit=6', 'GET');
@@ -365,6 +776,17 @@ class SmartLibraryApp {
             }
         } catch (error) {
             console.error('Error loading recent reviews:', error);
+        }
+    }
+
+    async loadHomeData() {
+        try {
+            await Promise.all([
+                this.loadFeaturedBooks(),
+                this.loadRecentReviews()
+            ]);
+        } catch (error) {
+            console.error('Error loading home data:', error);
         }
     }
 
@@ -433,6 +855,10 @@ class SmartLibraryApp {
                     searchResultsDiv.innerHTML = '<div class="no-results">No books found matching your criteria</div>';
                 } else {
                     this.renderBooks(response.data.books, 'search-results');
+                    // Add pagination if available
+                    if (response.data.pagination) {
+                        this.renderPagination(response.data.pagination, 'search-results');
+                    }
                 }
             } else {
                 console.error('Search failed:', response.message);
@@ -536,25 +962,154 @@ class SmartLibraryApp {
                 authors,
                 avgRating,
                 totalReviews,
-                availableCopies
+                availableCopies,
+                currentUser: this.currentUser,
+                userType: this.currentUser?.userType,
+                showBorrowButton: this.currentUser?.userType === 'reader' && availableCopies > 0
             });
             
             return `
-            <div class="book-card" onclick="app.showBookDetails(${book.book_id})">
-                <h3>${this.escapeHtml(title)}</h3>
-                <p class="author">${this.escapeHtml(authors)}</p>
-                <div class="book-info">
-                    <div class="rating">
-                        <span class="stars">${this.renderStars(avgRating)}</span>
-                        <span>(${totalReviews})</span>
+            <div class="book-card">
+                <div class="book-card-content" onclick="app.showBookDetails(${book.book_id})">
+                    <h3>${this.escapeHtml(title)}</h3>
+                    <p class="author">${this.escapeHtml(authors)}</p>
+                    <div class="book-info">
+                        <div class="rating">
+                            <span class="stars">${this.renderStars(avgRating)}</span>
+                            <span>(${totalReviews})</span>
+                        </div>
+                        <span class="availability ${availableCopies > 0 ? 'available' : 'unavailable'}">
+                            ${availableCopies > 0 ? 'Available' : 'Unavailable'}
+                        </span>
                     </div>
-                    <span class="availability ${availableCopies > 0 ? 'available' : 'unavailable'}">
-                        ${availableCopies > 0 ? 'Available' : 'Unavailable'}
-                    </span>
+                    <p class="text-muted">${this.escapeHtml(genre)} • ${this.escapeHtml(publisher)}</p>
                 </div>
-                <p class="text-muted">${this.escapeHtml(genre)} • ${this.escapeHtml(publisher)}</p>
+                <div class="book-card-actions">
+                    ${this.currentUser?.userType === 'reader' && availableCopies > 0 ?
+                        (this.borrowedBookIds.has(book.book_id) ?
+                            `<button class="btn btn-success btn-small" disabled>Already Borrowed</button>` :
+                            `<button class="btn btn-primary btn-small borrow-btn" data-book-id="${book.book_id}">Borrow</button>`
+                        ) :
+                        this.currentUser?.userType === 'reader' && availableCopies <= 0 ?
+                        `<button class="btn btn-secondary btn-small" disabled>Unavailable</button>` :
+                        ''
+                    }
+                    <button class="btn btn-outline btn-small" onclick="event.stopPropagation(); app.showBookDetails(${book.book_id})">Details</button>
+                </div>
             </div>`;
         }).join('');
+    }
+
+    renderPagination(pagination, containerId) {
+        const container = document.getElementById(containerId);
+        if (!container || !pagination || pagination.totalPages <= 1) return;
+
+        const { currentPage, totalPages, totalBooks, limit } = pagination;
+        const startItem = (currentPage - 1) * limit + 1;
+        const endItem = Math.min(currentPage * limit, totalBooks);
+
+        const paginationHTML = `
+            <div class="pagination-container">
+                <div class="pagination-info">
+                    Showing ${startItem}-${endItem} of ${totalBooks} results
+                </div>
+                <div class="pagination">
+                    ${currentPage > 1 ? `<button class="btn btn-outline pagination-btn" data-page="${currentPage - 1}">Previous</button>` : ''}
+                    ${this.generatePaginationButtons(currentPage, totalPages)}
+                    ${currentPage < totalPages ? `<button class="btn btn-outline pagination-btn" data-page="${currentPage + 1}">Next</button>` : ''}
+                </div>
+            </div>
+        `;
+
+        // Remove existing pagination
+        const existingPagination = container.querySelector('.pagination-container');
+        if (existingPagination) {
+            existingPagination.remove();
+        }
+
+        // Add new pagination
+        container.insertAdjacentHTML('beforeend', paginationHTML);
+
+        // Add event listeners
+        container.querySelectorAll('.pagination-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const page = parseInt(e.target.dataset.page);
+                this.searchBooksWithPage(page);
+            });
+        });
+    }
+
+    generatePaginationButtons(currentPage, totalPages) {
+        const buttons = [];
+        const maxVisible = 5;
+        
+        let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+        let end = Math.min(totalPages, start + maxVisible - 1);
+        
+        if (end - start + 1 < maxVisible) {
+            start = Math.max(1, end - maxVisible + 1);
+        }
+
+        if (start > 1) {
+            buttons.push(`<button class="btn btn-outline pagination-btn" data-page="1">1</button>`);
+            if (start > 2) {
+                buttons.push(`<span class="pagination-ellipsis">...</span>`);
+            }
+        }
+
+        for (let i = start; i <= end; i++) {
+            const activeClass = i === currentPage ? 'btn-primary' : 'btn-outline';
+            buttons.push(`<button class="btn ${activeClass} pagination-btn" data-page="${i}">${i}</button>`);
+        }
+
+        if (end < totalPages) {
+            if (end < totalPages - 1) {
+                buttons.push(`<span class="pagination-ellipsis">...</span>`);
+            }
+            buttons.push(`<button class="btn btn-outline pagination-btn" data-page="${totalPages}">${totalPages}</button>`);
+        }
+
+        return buttons.join('');
+    }
+
+    async searchBooksWithPage(page) {
+        const query = document.getElementById('search-query')?.value || '';
+        const genre = document.getElementById('genre-filter')?.value || '';
+        const publisher = document.getElementById('publisher-filter')?.value || '';
+        const availableOnly = document.getElementById('available-only')?.checked || false;
+
+        const params = new URLSearchParams();
+        if (query) params.append('q', query);
+        if (genre) params.append('genre', genre);
+        if (publisher) params.append('publisher', publisher);
+        if (availableOnly) params.append('available', 'true');
+        params.append('page', page);
+        params.append('limit', '20');
+
+        const searchResultsDiv = document.getElementById('search-results');
+        if (!searchResultsDiv) return;
+
+        searchResultsDiv.innerHTML = '<div class="loading">Searching books...</div>';
+
+        try {
+            const response = await this.apiCall(`/api/books/search?${params}`, 'GET');
+
+            if (response.success && response.data?.books) {
+                if (response.data.books.length === 0) {
+                    searchResultsDiv.innerHTML = '<div class="no-results">No books found matching your criteria</div>';
+                } else {
+                    this.renderBooks(response.data.books, 'search-results');
+                    if (response.data.pagination) {
+                        this.renderPagination(response.data.pagination, 'search-results');
+                    }
+                }
+            } else {
+                searchResultsDiv.innerHTML = '<div class="error">Failed to search books</div>';
+            }
+        } catch (error) {
+            console.error('Search error:', error);
+            searchResultsDiv.innerHTML = '<div class="error">Error searching books</div>';
+        }
     }
 
     renderSearchResults(books) {
@@ -585,9 +1140,10 @@ class SmartLibraryApp {
                     ${this.currentUser ? `
                         <div class="book-actions">
                             ${book.available_copies > 0 ? `
-                                <button class="btn btn-primary btn-sm" onclick="app.checkoutBook(${book.book_id})">
-                                    Checkout
-                                </button>
+                                ${this.borrowedBookIds.has(book.book_id) ?
+                                    `<button class="btn btn-success btn-sm" disabled>Already Borrowed</button>` :
+                                    `<button class="btn btn-primary btn-sm borrow-btn" data-book-id="${book.book_id}">Borrow</button>`
+                                }
                             ` : ''}
                             <button class="btn btn-secondary btn-sm" onclick="app.showBookDetails(${book.book_id})">
                                 Details
@@ -749,7 +1305,7 @@ class SmartLibraryApp {
                             <p>${this.escapeHtml(book.description || 'No description available')}</p>
                         </div>
                         <div class="book-actions">
-                            ${this.currentUser?.userType === 'reader' && book.isAvailable ?
+                            ${this.currentUser?.userType === 'reader' && book.available_copies > 0 ?
                         `<button class="btn btn-primary" onclick="app.borrowBook(${book.book_id})">Borrow Book</button>` :
                         ''
                     }
@@ -777,40 +1333,93 @@ class SmartLibraryApp {
     }
 
     async borrowBook(bookId) {
+        console.log('borrowBook called with bookId:', bookId);
+        console.log('currentUser:', this.currentUser);
+        
         if (!this.currentUser) {
             this.showToast('Please login to borrow books', 'warning');
             return;
         }
 
+        if (this.currentUser.userType !== 'reader') {
+            this.showToast('Only readers can borrow books', 'warning');
+            return;
+        }
+
         try {
-            this.showLoading();
+            // Kiểm tra xem phần tử loading-spinner có tồn tại không
+            const loadingSpinner = document.getElementById('loading-spinner');
+            if (loadingSpinner) {
+                loadingSpinner.style.display = 'block';
+            } else {
+                console.warn('Loading spinner element not found!');
+            }
+            
+            console.log('Sending borrow request...');
             const response = await this.apiCall('/api/checkouts/borrow', 'POST', {
                 bookId: bookId,
                 dueDays: 14
             });
 
+            console.log('Borrow response:', response);
+
             if (response.success) {
                 this.showToast('Book borrowed successfully!', 'success');
-                this.hideModal(document.getElementById('book-details-modal'));
+                const detailsModal = document.getElementById('book-details-modal');
+                if (detailsModal) {
+                    this.hideModal(detailsModal);
+                }
+                
+                // Cập nhật trạng thái sách sau khi mượn thành công
+                this.borrowedBookIds.add(bookId);
                 this.loadCurrentCheckouts();
+                
+                // Cập nhật trang hiện tại
+                const currentSection = document.querySelector('.section.active');
+                if (currentSection) {
+                    if (currentSection.id === 'home') {
+                        this.loadHomeData();
+                    } else if (currentSection.id === 'search') {
+                        this.searchBooks();
+                    }
+                }
             } else {
-                this.showToast(response.message, 'error');
+                this.showToast(response.message || 'Failed to borrow book', 'error');
             }
         } catch (error) {
-            this.showToast('Error borrowing book', 'error');
+            console.error('Borrow error:', error);
+            this.showToast('Error borrowing book: ' + (error.message || 'Unknown error'), 'error');
         } finally {
-            this.hideLoading();
+            const loadingSpinner = document.getElementById('loading-spinner');
+            if (loadingSpinner) {
+                loadingSpinner.style.display = 'none';
+            }
         }
     }
 
     async loadCurrentCheckouts() {
         try {
             const response = await this.apiCall('/api/checkouts/my-checkouts?status=active', 'GET');
+            console.log('loadCurrentCheckouts response:', response);
             if (response.success) {
-                this.renderCheckouts(response.data.checkouts, 'current-checkouts');
+                const checkouts = response.data.checkouts || response.data;
+                console.log('Checkouts data:', checkouts);
+                this.renderCheckouts(checkouts, 'current-checkouts');
             }
         } catch (error) {
             console.error('Error loading current checkouts:', error);
+        }
+    }
+
+    async loadBorrowedBookIds() {
+        try {
+            const response = await this.apiCall('/api/checkouts/my-borrowed-ids', 'GET');
+            if (response.success) {
+                this.borrowedBookIds = new Set(response.data);
+                console.log('Loaded borrowed book IDs:', this.borrowedBookIds);
+            }
+        } catch (error) {
+            console.error('Error loading borrowed book IDs:', error);
         }
     }
 
@@ -840,6 +1449,8 @@ class SmartLibraryApp {
         const container = document.getElementById(containerId);
         if (!container) return;
 
+        console.log('renderCheckouts called with:', { checkouts, containerId });
+
         if (checkouts.length === 0) {
             const message = containerId === 'current-checkouts' ? 'No current checkouts' : 'No checkout history';
             container.innerHTML = `<p class="text-center text-muted">${message}</p>`;
@@ -855,15 +1466,19 @@ class SmartLibraryApp {
                     <p><strong>Due:</strong> ${new Date(checkout.due_date).toLocaleDateString()}</p>
                     <p><strong>Status:</strong> <span class="availability ${checkout.status}">${checkout.status}</span></p>
                     ${checkout.return_date ? `<p><strong>Returned:</strong> ${new Date(checkout.return_date).toLocaleDateString()}</p>` : ''}
-                    ${checkout.late_fee > 0 ? `<p><strong>Late Fee:</strong> $${checkout.late_fee}</p>` : ''}
+                    ${checkout.late_fee > 0 ? `<p><strong>Late Fee:</strong> ${checkout.late_fee}</p>` : ''}
                 </div>
                 <div class="book-actions">
-                    ${checkout.status === 'active' ? `
-                        <button class="btn btn-success btn-small" onclick="app.returnBook(${checkout.checkout_id})">Return Book</button>
-                        <button class="btn btn-secondary btn-small" onclick="app.renewBook(${checkout.checkout_id})">Renew</button>
-                    ` : ''}
-                    ${checkout.status === 'returned' ? `
-                        <button class="btn btn-primary btn-small" onclick="app.showReviewForm(${checkout.book_id})">Write Review</button>
+                    ${(() => {
+                        console.log('Rendering actions for checkout:', checkout.checkout_id, 'status:', checkout.status);
+                        return checkout.status === 'active' ? `
+                            <button class="btn btn-success btn-small return-book-btn" data-checkout-id="${checkout.checkout_id}">Return Book</button>
+                            <button class="btn btn-secondary btn-small renew-book-btn" data-checkout-id="${checkout.checkout_id}">Renew</button>
+                            <button class="btn btn-primary btn-small write-review-btn" data-book-id="${checkout.book_id}">Write Review</button>
+                        ` : '';
+                    })()}
+                    ${checkout.status === 'returned' || checkout.status === 'overdue' ? `
+                        <button class="btn btn-primary btn-small write-review-btn" data-book-id="${checkout.book_id}">Write Review</button>
                     ` : ''}
                 </div>
             </div>
@@ -900,15 +1515,37 @@ class SmartLibraryApp {
     }
 
     async returnBook(checkoutId) {
+        console.log('returnBook called with checkoutId:', checkoutId);
+        console.log('this context:', this);
+        
+        if (!checkoutId) {
+            console.error('No checkoutId provided');
+            this.showToast('Error: No checkout ID provided', 'error');
+            return;
+        }
+        
         try {
             this.showLoading();
+            console.log('Making API call to return book...');
             const response = await this.apiCall('/api/checkouts/return', 'POST', {
                 checkoutId: checkoutId
             });
 
             if (response.success) {
                 this.showToast(response.message, 'success');
+                // Reload borrowed book IDs to update UI
+                await this.loadBorrowedBookIds();
                 this.loadCurrentCheckouts();
+                
+                // Cập nhật trang hiện tại
+                const currentSection = document.querySelector('.section.active');
+                if (currentSection) {
+                    if (currentSection.id === 'home') {
+                        this.loadHomeData();
+                    } else if (currentSection.id === 'search') {
+                        this.searchBooks();
+                    }
+                }
             } else {
                 this.showToast(response.message, 'error');
             }
@@ -959,6 +1596,13 @@ class SmartLibraryApp {
                 this.hideModal(document.getElementById('login-modal'));
                 this.showToast('Login successful!', 'success');
                 document.getElementById('login-form').reset();
+                // Load user data if they're a reader
+                if (this.currentUser.userType === 'reader') {
+                    await Promise.all([
+                        this.loadMyReviews(),
+                        this.loadBorrowedBookIds()
+                    ]);
+                }
             } else {
                 this.showToast(response.message, 'error');
             }
@@ -1115,7 +1759,7 @@ class SmartLibraryApp {
 
         try {
             this.showLoading();
-            const response = await this.apiCall('/api/reviews', 'POST', {
+            const response = await this.apiCall('/api/reviews/submit', 'POST', {
                 bookId: parseInt(bookId),
                 rating: parseInt(rating),
                 comment: comment || null
@@ -1141,14 +1785,25 @@ class SmartLibraryApp {
     }
 
     showReviewForm(bookId) {
+        console.log('showReviewForm called with bookId:', bookId);
         if (!this.currentUser) {
             this.showToast('Please login to write reviews', 'warning');
             return;
         }
 
-        document.getElementById('review-book-id').value = bookId;
-        document.getElementById('review-book-form').reset();
-        this.showModal('review-book-modal');
+        const bookIdElement = document.getElementById('review-book-id');
+        const reviewForm = document.getElementById('review-book-form');
+        const modal = document.getElementById('review-book-modal');
+        
+        console.log('Elements found:', {
+            bookIdElement: !!bookIdElement,
+            reviewForm: !!reviewForm,
+            modal: !!modal
+        });
+
+        if (bookIdElement) bookIdElement.value = bookId;
+        if (reviewForm) reviewForm.reset();
+        if (modal) this.showModal('review-book-modal');
     }
 
     async editReview(reviewId) {
@@ -1838,10 +2493,7 @@ class SmartLibraryApp {
         document.getElementById(`${tabName}-panel`)?.classList.add('active');
 
         // Load tab-specific data
-        if (tabName === 'reviews') {
-            // For the main reviews tab
-            this.loadAllReviews();
-        } else if (this.currentUser?.userType === 'reader') {
+        if (this.currentUser?.userType === 'reader') {
             switch (tabName) {
                 case 'current':
                     this.loadCurrentCheckouts();
@@ -1862,6 +2514,9 @@ class SmartLibraryApp {
                 case 'authors':
                     this.loadAuthors();
                     break;
+                case 'users':
+                    this.loadUsers();
+                    break;
                 case 'reports':
                     this.loadReportsData();
                     break;
@@ -1869,6 +2524,9 @@ class SmartLibraryApp {
                     this.loadAnalyticsData();
                     break;
             }
+        } else if (tabName === 'reviews') {
+            // For the main reviews tab (when not logged in or for general reviews section)
+            this.loadAllReviews();
         }
     }
 
@@ -2264,12 +2922,6 @@ class SmartLibraryApp {
             this.hideLoading();
         }
 
-        container.innerHTML = `
-            <div class="reports-container">
-                ${topReadersSection}
-                ${lowAvailabilitySection}
-            </div>
-        `;
     }
 
     renderMostBorrowedBooks(books) {

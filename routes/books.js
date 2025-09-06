@@ -47,6 +47,7 @@ router.get('/search', [
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 100 })
 ], optionalAuth, async (req, res) => {
+    const startTime = Date.now();
     try {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
@@ -65,13 +66,22 @@ router.get('/search', [
 
         // Build dynamic WHERE clause
         if (q) {
-            whereConditions.push('(b.title LIKE ? OR b.description LIKE ?)');
+            // Use LIKE search for all fields (compatible and reliable)
+            whereConditions.push(`(
+                b.title COLLATE utf8mb4_general_ci LIKE ? OR 
+                b.description COLLATE utf8mb4_general_ci LIKE ? OR
+                b.genre COLLATE utf8mb4_general_ci LIKE ? OR 
+                b.publisher COLLATE utf8mb4_general_ci LIKE ? OR
+                a.first_name COLLATE utf8mb4_general_ci LIKE ? OR 
+                a.last_name COLLATE utf8mb4_general_ci LIKE ? OR 
+                CONCAT(a.first_name, " ", a.last_name) COLLATE utf8mb4_general_ci LIKE ?
+            )`);
             const searchTerm = `%${q}%`;
-            queryParams.push(searchTerm, searchTerm);
+            queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
         }
 
         if (author) {
-            whereConditions.push('(a.first_name LIKE ? OR a.last_name LIKE ? OR CONCAT(a.first_name, " ", a.last_name) LIKE ?)');
+            whereConditions.push('(a.first_name COLLATE utf8mb4_general_ci LIKE ? OR a.last_name COLLATE utf8mb4_general_ci LIKE ? OR CONCAT(a.first_name, " ", a.last_name) COLLATE utf8mb4_general_ci LIKE ?)');
             const authorTerm = `%${author}%`;
             queryParams.push(authorTerm, authorTerm, authorTerm);
         }
@@ -82,7 +92,7 @@ router.get('/search', [
         }
 
         if (publisher) {
-            whereConditions.push('b.publisher LIKE ?');
+            whereConditions.push('b.publisher COLLATE utf8mb4_general_ci LIKE ?');
             queryParams.push(`%${publisher}%`);
         }
 
@@ -142,6 +152,9 @@ router.get('/search', [
             const [countResult] = await mysqlPool.query(countQuery, queryParams.slice(0, -2)); // Remove limit and offset
             totalBooks = countResult[0].total;
 
+            const responseTime = Date.now() - startTime;
+            console.log(`Search completed in ${responseTime}ms for query: "${q || 'all'}"`);
+            
             res.json({
                 success: true,
                 data: {
@@ -151,6 +164,10 @@ router.get('/search', [
                         totalPages: Math.ceil(totalBooks / limit),
                         totalBooks,
                         limit: parseInt(limit)
+                    },
+                    performance: {
+                        responseTime: responseTime,
+                        queryTime: responseTime
                     }
                 }
             });
